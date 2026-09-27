@@ -60,5 +60,6 @@ export function loadDemo() {
       { id: 'demo-netflix', label: 'Netflix', amount: 13.49, type: 'expense', categoryId: 'abonnements', sub: 'Streaming', paymentId: 'cb', accountId: 'courant', frequency: 'monthly', interval: 1, startDate: toISO(new Date(now.getFullYear(), now.getMonth() + 1, 12)), nextDate: toISO(new Date(now.getFullYear(), now.getMonth() + 1, 12)), active: true },
     );
   }
+  s.settings.demoLoaded = true;
   store.commitSilently();
 }

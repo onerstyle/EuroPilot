@@ -33,7 +33,7 @@ const emptyState = () => ({
   payments: structuredClone(DEFAULT_PAYMENT_METHODS),
   budgets: {},
   recurring: [],
-  settings: { theme: 'auto', defaultAccount: 'courant', defaultPayment: 'cb', onboarded: false },
+  settings: { theme: 'auto', defaultAccount: 'courant', defaultPayment: 'cb', onboarded: false, demoLoaded: false },
 });
 
 let state = load();
@@ -201,6 +201,7 @@ export const store = {
   wipe() {
     undoStack.length = 0;
     state = emptyState();
+    state.settings.onboarded = true;
     localStorage.removeItem(KEY);
     save();
   },

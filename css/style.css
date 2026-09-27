@@ -286,6 +286,7 @@ label.check { flex-direction: row; align-items: center; gap: .5rem; font-size: .
 .welcome .btn-primary { background: #fff; color: var(--accent); box-shadow: none; }
 .welcome .btn-ghost { background: rgba(255, 255, 255, .15); color: #fff; border-color: rgba(255, 255, 255, .3); }
 .welcome .btn-link { color: #fff; opacity: .85; }
+.welcome[hidden] { display: none !important; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1024px) {
