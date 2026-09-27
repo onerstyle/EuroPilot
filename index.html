@@ -8,6 +8,17 @@
   <title>EuroPilot — Pilotez votre argent, jour après jour.</title>
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
+  <script>
+    // Dans l'APK Android (Capacitor), la page de présentation n'a pas lieu
+    // d'être : on ouvre directement l'application. Le bridge Capacitor étant
+    // injecté au chargement du document, window.Capacitor existe déjà ici ;
+    // le repli sur https://localhost couvre le serveur local du WebView.
+    // Sans effet sur le web (GitHub Pages), où Capacitor est absent.
+    if ((window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
+        (location.protocol === 'https:' && location.hostname === 'localhost')) {
+      location.replace('app.html');
+    }
+  </script>
   <style>
     /* Page d'accueil : style autonome, léger, clair/sombre automatique */
     :root { --accent: #2563eb; --accent-2: #7c3aed; --bg: #f8fafc; --bg-2: #fff; --text: #0f172a; --text-2: #475569; --border: #e2e8f0; --green: #16a34a; --red: #dc2626; }

@@ -1,0 +1,35 @@
+{
+  "name": "europilot",
+  "version": "1.0.0",
+  "description": "EuroPilot — Pilotez votre argent, jour après jour. Application web open source de gestion financière personnelle (100 % locale), empaquetée en APK Android avec Capacitor.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "sync:www": "rm -rf www && mkdir -p www && cp -r index.html app.html manifest.webmanifest sw.js css js assets www/",
+    "copy": "npm run sync:www && npx cap copy",
+    "sync": "npm run sync:www && npx cap sync",
+    "open:android": "npx cap open android",
+    "build:android": "npm run sync:www && npx cap copy android && npx cap sync android",
+    "android:debug": "cd android && ./gradlew assembleDebug",
+    "android:release": "cd android && ./gradlew assembleRelease",
+    "android:bundle": "cd android && ./gradlew bundleRelease",
+    "icons": "node scripts/generate-icons.mjs"
+  },
+  "keywords": [
+    "budget",
+    "finances",
+    "euro",
+    "pwa",
+    "capacitor",
+    "android"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
+    "sharp": "^0.33.5"
+  }
+}

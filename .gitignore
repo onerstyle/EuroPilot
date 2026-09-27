@@ -1,3 +1,6 @@
 .DS_Store
 node_modules/
 *.log
+
+# Copie locale des assets web pour Capacitor (régénérée par `npm run sync:www`)
+www/
