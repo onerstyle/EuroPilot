@@ -63,7 +63,10 @@ export function render(root, { navigate }) {
     <div class="card">
       <h2>Confidentialité</h2>
       <p class="muted small">🔒 EuroPilot fonctionne entièrement hors ligne. Aucune donnée financière n'est envoyée à un serveur, aucun compte n'est requis, aucun traceur n'est utilisé. Le code source est ouvert (licence MIT).</p>
-      <button class="btn btn-ghost" data-act="demo">🧪 Charger des données de démonstration</button>
+      <div class="btn-row wrap">
+        <button class="btn btn-ghost" data-act="demo">🧪 Charger des données de démonstration</button>
+        <button class="btn btn-ghost" data-act="demo-clear">🗑️ Supprimer les données de démonstration</button>
+      </div>
     </div>
 
     <div class="card danger-zone">
@@ -102,6 +105,12 @@ export function render(root, { navigate }) {
         const r = importJSON(text); toastUndo(r.full ? `Sauvegarde restaurée (${r.imported} opérations)` : `${r.imported} opération(s) importée(s)`);
       }
       else if (act === 'demo') { if (await confirm('Ajouter un jeu de données fictives (18 mois d\'historique) pour découvrir l\'application ?', { okLabel: 'Charger la démo', danger: false })) { const { loadDemo } = await import('../demo.js'); loadDemo(); toastUndo('Données de démonstration chargées'); } }
+      else if (act === 'demo-clear') {
+        if (!(await confirm('Supprimer les données de démonstration ? Toutes les données de démonstration seront effacées de cet appareil.', { okLabel: 'Supprimer', danger: true }))) return;
+        store.wipe();
+        toast('Données de démonstration supprimées', { type: 'success' });
+        navigate('dashboard');
+      }
       else if (act === 'wipe') {
         if (!(await confirm('<b>Supprimer définitivement toutes les données ?</b><br>Toutes les transactions, comptes, budgets et paramètres seront effacés de cet appareil. Cette action est <b>irréversible</b>. Pensez à exporter une sauvegarde avant.', { okLabel: 'Tout supprimer' }))) return;
         if (!(await confirm('Dernière confirmation : êtes-vous certain ?', { okLabel: 'Oui, tout effacer' }))) return;
