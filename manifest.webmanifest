@@ -1,0 +1,13 @@
+{
+  "name": "EuroPilot",
+  "short_name": "EuroPilot",
+  "description": "Pilotez votre argent, jour après jour.",
+  "start_url": "./app.html",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
+  "lang": "fr",
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

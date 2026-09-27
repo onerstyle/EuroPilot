@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2563eb">
+  <meta name="description" content="EuroPilot — Pilotez votre argent, jour après jour. Gestion financière personnelle, 100 % locale et open source.">
+  <title>EuroPilot</title>
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="assets/icon.svg">
+  <link rel="stylesheet" href="css/style.css">
+  <script>
+    // Applique le thème avant le premier rendu pour éviter un flash
+    try { const s = JSON.parse(localStorage.getItem('europilot.data.v1') || '{}').settings || {}; const t = s.theme || 'auto';
+      document.documentElement.dataset.theme = (t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches)) ? 'dark' : 'light'; } catch (e) {}
+  </script>
+</head>
+<body>
+  <div id="app">
+    <!-- Barre latérale (ordinateur / tablette) -->
+    <aside id="sidebar">
+      <a class="brand" href="index.html" title="Page d'accueil"><img src="assets/icon.svg" alt="" width="34" height="34"><span><b>EuroPilot</b><small>Pilotez votre argent</small></span></a>
+      <nav id="nav-side" aria-label="Navigation principale"></nav>
+      <div class="sidebar-foot">
+        <p class="muted small">🔒 Données 100 % locales</p>
+        <a class="muted small" href="https://github.com/onerstyle/EuroPilot" target="_blank" rel="noopener">Open source · MIT</a>
+      </div>
+    </aside>
+    <div id="nav-backdrop"></div>
+
+    <!-- Contenu principal -->
+    <div id="content">
+      <header id="topbar">
+        <a class="brand brand-mobile" href="index.html"><img src="assets/icon.svg" alt="" width="28" height="28"><b>EuroPilot</b></a>
+        <div class="topbar-balance"><span class="muted small">Solde total</span><b id="header-balance">0,00 €</b></div>
+        <div class="topbar-actions">
+          <button class="icon-btn" id="undo-btn" title="Annuler la dernière action" aria-label="Annuler">↶</button>
+          <button class="icon-btn" id="theme-toggle" title="Basculer le thème" aria-label="Thème">🌙</button>
+          <button class="btn btn-primary hide-mobile" id="fab" title="Nouvelle transaction (N)">＋ Nouvelle transaction</button>
+        </div>
+      </header>
+
+      <!-- Bandeau de bienvenue (première visite) -->
+      <div id="welcome" class="welcome" hidden>
+        <div>
+          <h2>👋 Bienvenue dans EuroPilot</h2>
+          <p>Aucune inscription, aucun serveur : vos données restent sur cet appareil. Commencez par ajouter une opération, ou découvrez l'application avec des données fictives.</p>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" data-start>＋ Ma première opération</button>
+          <button class="btn btn-ghost" data-demo>🧪 Charger la démo</button>
+          <button class="btn-link" data-dismiss>Plus tard</button>
+        </div>
+      </div>
+
+      <main id="view" class="view" aria-live="polite"></main>
+    </div>
+
+    <!-- Barre de navigation mobile -->
+    <nav id="nav-bottom" aria-label="Navigation mobile"></nav>
+  </div>
+
+  <div id="toasts" aria-live="polite"></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
