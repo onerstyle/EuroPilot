@@ -16,11 +16,12 @@ EuroPilot est une application web **open source** de gestion financière personn
 1. [Fonctionnalités](#fonctionnalités)
 2. [Installation et lancement local](#installation-et-lancement-local)
 3. [Déploiement sur GitHub Pages](#déploiement-sur-github-pages)
-4. [Fonctionnement](#fonctionnement)
-5. [Architecture du code](#architecture-du-code)
-6. [Sauvegarde des données](#sauvegarde-des-données)
-7. [Contribuer](#contribuer)
-8. [Licence](#licence)
+4. [Application Android (APK) avec Capacitor](#application-android-apk-avec-capacitor)
+5. [Fonctionnement](#fonctionnement)
+6. [Architecture du code](#architecture-du-code)
+7. [Sauvegarde des données](#sauvegarde-des-données)
+8. [Contribuer](#contribuer)
+9. [Licence](#licence)
 
 ---
 
@@ -80,6 +81,71 @@ Tous les chemins sont relatifs : le site fonctionne aussi bien à la racine d'un
 
 ---
 
+## Application Android (APK) avec Capacitor
+
+EuroPilot est empaqueté en application Android native avec [Capacitor 6](https://capacitorjs.com/) : le site statique est embarqué dans un WebView, sans serveur ni connexion réseau. L'APK se construit localement ou via GitHub Actions.
+
+### Prérequis
+
+- **Node.js 20** (ou plus récent) et npm ;
+- **Java 21** (Temurin recommandé) ;
+- **Android Studio** (SDK Android 35 inclus) pour ouvrir le projet natif et brancher un appareil.
+
+```bash
+npm install          # installe Capacitor (+ sharp pour les icônes)
+npm run sync:www     # copie les assets web dans www/
+npx cap sync android # copie www/ dans le projet Android + met à jour Gradle
+npm run open:android # ouvre android/ dans Android Studio
+```
+
+### Scripts utiles
+
+| Commande | Effet |
+|---|---|
+| `npm run sync:www` | Régénère `www/` (copie de `index.html`, `app.html`, `manifest.webmanifest`, `sw.js`, `css/`, `js/`, `assets/`). |
+| `npm run copy` | `sync:www` puis `npx cap copy` (toutes plateformes). |
+| `npm run sync` | `sync:www` puis `npx cap sync`. |
+| `npm run build:android` | `sync:www` + `cap copy android` + `cap sync android` : le projet Android est à jour. |
+| `npm run open:android` | Ouvre le projet natif dans Android Studio. |
+| `npm run android:debug` | `cd android && ./gradlew assembleDebug` → APK dans `android/app/build/outputs/apk/debug/`. |
+| `npm run android:release` | `./gradlew assembleRelease` (nécessite une signature pour être installable). |
+| `npm run android:bundle` | `./gradlew bundleRelease` (AAB pour le Play Store). |
+| `npm run icons` | Régénère icônes (`mipmap-*`) et écrans de démarrage (`drawable*/splash.png`) depuis `assets/icon.svg`, avec sharp. |
+
+Après toute modification du code web, relancez `npm run build:android` (ou `npx cap copy android`) avant de reconstruire l'APK : Capacitor ne surveille pas les fichiers, il les copie.
+
+### Workflow GitHub Actions (APK automatique)
+
+Le workflow `.github/workflows/android.yml` construit l'APK de debug :
+
+- **Déclencheurs** : push sur `main` touchant le web (`www/`, `*.html`, `css/`, `js/`, `assets/`, `manifest.webmanifest`, `sw.js`), la config Capacitor ou le projet `android/` ; pull requests sur ces mêmes chemins ; lancement manuel (*workflow_dispatch*).
+- **Étapes** : checkout → Node 20 (cache npm) → `npm ci` → `npm run sync:www` → `npx cap sync android` → JDK 21 (Temurin) → SDK Android → `./gradlew assembleDebug` → artifact **`europilot-debug-apk`** (téléchargeable depuis l'onglet *Actions*, valable 30 jours).
+- La partie **AAB release** (`bundleRelease`) est présente mais commentée : elle nécessite un keystore de signature.
+
+### Structure du projet Capacitor
+
+```
+EuroPilot/
+├── capacitor.config.json   # appId fr.europilot.app, webDir www/, schéma https, splash bleue
+├── package.json            # scripts sync/copy/build/android + dépendances Capacitor 6
+├── scripts/generate-icons.mjs  # génère icônes & splashs Android depuis assets/icon.svg
+├── www/                    # COPIE des assets web servant de source au WebView (non versionnée)
+└── android/                # projet natif Gradle (versionné), généré par `npx cap add android`
+    ├── app/src/main/assets/public/   # copie de www/ faite par `cap copy` (non versionnée)
+    ├── app/src/main/java/fr/europilot/app/MainActivity.java
+    ├── app/src/main/res/             # icônes mipmap-*, splashs, couleurs de la marque
+    └── gradlew                       # wrapper Gradle 8.11.1 (AGP 8.7.3, JDK 21, SDK 35)
+```
+
+Points d'attention :
+
+- **`www/` et `android/app/src/main/assets/public/` ne sont pas versionnés** : ils sont régénérés par `npm run sync:www` puis `cap copy` (localement comme dans le workflow). Le projet Gradle (`android/`), lui, est versionné.
+- **Page d'entrée** : dans l'APK, `index.html` (page de présentation) redirige immédiatement vers `app.html` ; sur le web, le comportement est inchangé.
+- **Service worker** : désactivé dans l'APK (les fichiers sont déjà embarqués), il reste actif sur le web pour le mode hors ligne.
+- **Icônes adaptatives** : fond `#2563eb` (`values/ic_launcher_background.xml`) + premier plan `ic_launcher_foreground.png` (glyphe « € » blanc) ; icônes legacy et rondes déclinées en mdpi→xxxhdpi.
+
+---
+
 ## Fonctionnement
 
 ### Première utilisation
@@ -131,6 +197,11 @@ EuroPilot/
 │       ├── years.js
 │       └── settings.js
 ├── .github/workflows/deploy.yml  # Déploiement GitHub Pages
+├── .github/workflows/android.yml # Construction de l'APK Android (artifact)
+├── capacitor.config.json         # Configuration Capacitor (appId, webDir, splash)
+├── package.json                  # Scripts npm + dépendances Capacitor 6 / sharp
+├── scripts/generate-icons.mjs    # Génère icônes & splashs Android (sharp)
+├── android/                      # Projet natif Android Gradle (Capacitor 6)
 ├── LICENSE                   # MIT
 └── README.md
 ```

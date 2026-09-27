@@ -1,0 +1,17 @@
+{
+  "appId": "fr.europilot.app",
+  "appName": "EuroPilot",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "backgroundColor": "#2563eb"
+    }
+  },
+  "android": {
+    "backgroundColor": "#2563eb"
+  }
+}

@@ -1,0 +1,123 @@
+# Construit l'APK Android de debug d'EuroPilot (Capacitor) à chaque évolution
+# du code web ou du projet natif, et publie l'APK en artifact téléchargeable.
+name: Build Android (APK)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'www/**'
+      - 'index.html'
+      - 'app.html'
+      - 'css/**'
+      - 'js/**'
+      - 'assets/**'
+      - 'manifest.webmanifest'
+      - 'sw.js'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'www/**'
+      - 'index.html'
+      - 'app.html'
+      - 'css/**'
+      - 'js/**'
+      - 'assets/**'
+      - 'manifest.webmanifest'
+      - 'sw.js'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: APK debug
+    # Image pinée : ubuntu-latest migre vers Ubuntu 26 le 19/10/2026.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v4
+
+      - name: Installation de Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Installation des dépendances npm
+        run: npm ci
+
+      - name: Génération du dossier web (www/)
+        run: npm run sync:www
+
+      - name: Synchronisation Capacitor (web → android)
+        run: npx cap sync android
+
+      - name: Installation du JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # android-actions/setup-android@v3 est cassé : son bootstrap installe le
+      # paquet legacy « tools », retiré du dépôt Google (« Failed to find
+      # package 'tools' »). On utilise donc le SDK préinstallé des runners
+      # ubuntu, avec repli sur un téléchargement des cmdline-tools officiels.
+      - name: Installation du SDK Android
+        run: |
+          set -eu
+          if [ -z "${ANDROID_HOME:-}" ] || [ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            export ANDROID_HOME="$RUNNER_TEMP/android-sdk"
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            curl -fsSL --retry 3 -o /tmp/cmdtools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            unzip -q /tmp/cmdtools.zip -d "$ANDROID_HOME/cmdline-tools"
+            mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          fi
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Construction de l'APK debug
+        run: cd android && chmod +x gradlew && ./gradlew assembleDebug
+
+      - name: Téléversement de l'APK debug
+        uses: actions/upload-artifact@v4
+        with:
+          name: europilot-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # ------------------------------------------------------------------
+      # Publication d'un AAB (Android App Bundle) pour le Play Store :
+      # nécessite une signature (keystore) — décommenter une fois configurée.
+      #
+      # - name: Construction de l'AAB release
+      #   run: cd android && ./gradlew bundleRelease
+      #
+      # - name: Téléversement de l'AAB release
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: europilot-release-aab
+      #     path: android/app/build/outputs/bundle/release/app-release.aab
+      #     if-no-files-found: error
+      # ------------------------------------------------------------------

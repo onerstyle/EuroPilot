@@ -122,8 +122,12 @@ function init() {
 
   onboarding();
 
-  // Service worker pour le mode hors ligne (uniquement en http/https)
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  // Service worker pour le mode hors ligne (uniquement en http/https).
+  // Jamais dans l'APK Android : les fichiers y sont déjà embarqués par
+  // Capacitor, et un service worker y servirait des versions périmées des
+  // assets après une mise à jour de l'application.
+  const isNative = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+  if (!isNative && 'serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
 /** En-tête : solde global + état du bouton d'annulation */
