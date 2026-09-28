@@ -163,7 +163,7 @@ EuroPilot reste **100 % local par défaut**. La synchronisation Famille est **10
 ### Configuration (30 s, une seule fois)
 
 1. Sur un téléphone : **Paramètres → 👨‍👩‍👧‍👦 Synchronisation Famille → ✨ Créer un salon** → un code `EURO-XXXX` apparaît.
-2. **Copier le code / Partager le lien / QR** et l'envoyer à ton/ta partenaire (SMS, WhatsApp…).
+2. **Copier le code / Partager le lien / QR** et l'envoyer à votre partenaire (SMS, WhatsApp…).
 3. Sur son téléphone : **Paramètres → Famille → Rejoindre un salon** → coller le code → **Synchroniser maintenant**.
 4. C'est tout — utilisez le **même code sur tous les appareils** qui doivent partager le même budget. L'auto-sync s'occupe du reste.
 
