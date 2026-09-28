@@ -229,9 +229,45 @@ export function render(root, { navigate }) {
   };
   driveClientInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#drive-save-id', root).click(); });
 
+  // Helper : affiche une erreur Drive de façon actionnable (modale pour le cas "OAuth client was not found")
+  function showDriveError(e) {
+    const msg = String(e?.message || e || '');
+    console.error('[drive]', e);
+    const isClientNotFound = msg.includes('Client OAuth introuvable') || msg.toLowerCase().includes('oauth client was not found');
+    if (isClientNotFound || msg.length > 400) {
+      // Modale détaillée — le cas de ta femme est expliqué ici
+      const detail = esc(msg).replace(/\n/g, '<br>').slice(0, 3000);
+      openModal({
+        title: isClientNotFound ? 'Connexion Drive bloquée — action requise' : 'Erreur Drive',
+        size: '',
+        content: `<div style="line-height:1.6">
+          <div style="background:var(--bg-3);border:1px solid var(--border);border-radius:9px;padding:.7rem .85rem;max-height:220px;overflow:auto;font-size:.82rem;white-space:pre-wrap;word-break:break-word">${detail}</div>
+          ${isClientNotFound ? `
+          <p class="muted small" style="margin-top:.8rem"><b>Pourquoi chez toi ça marche et pas chez ta femme ?</b> Ton compte est propriétaire du projet Cloud → automatiquement autorisé. Son compte ne l'est pas → Google bloque en mode <code>Testing</code>.</p>
+          <ol style="margin:.6rem 0 0 1.2rem" class="small">
+            <li><b>Vérifie le Client ID</b> : <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Cloud Console → Identifiants</a> → le bon projet doit être sélectionné, le Client ID doit se terminer par <code>.apps.googleusercontent.com</code> et être de type <b>Application Web</b> (pas Android).</li>
+            <li><b>Active Drive API</b> : <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener">Bibliothèque → Google Drive API → Activer</a> (attendre 2 min).</li>
+            <li><b>Autorise ta femme</b> : <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener">Écran de consentement → Audience → Test users → + Add users</a> → ajoute <code>gmail-de-ta-femme@gmail.com</code> (et le tien). <b>OU</b> clique sur <b>PUBLISH APP</b> pour passer en Production (fini la limite 7 jours).</li>
+            <li><b>Origines autorisées</b> : dans <b>Identifiants → ton ID client Web → Origines JavaScript autorisées</b>, ajoute exactement :<br>
+              <code>https://onerstyle.github.io</code><br>
+              <code>${esc(location.origin)}</code><br>
+              <code>capacitor://localhost</code><br>
+              <code>http://localhost</code> et <code>https://localhost</code></li>
+          </ol>
+          <p class="muted small" style="margin-top:.7rem">💡 Le téléphone n'a pas besoin d'avoir le compte Gmail lié au système : la connexion se fait dans la fenêtre Google qui s'ouvre. Elle se loguera avec son Gmail.</p>
+          ` : ''}
+          <p class="muted small" style="margin-top:.7rem">Besoin d'aide ? Copie le bloc ci-dessus et envoie-le. En attendant, tu peux utiliser <b>Sauvegarde complète → envoi par mail</b> puis <b>Restaurer</b> chez elle.</p>
+        </div>`,
+        footer: `<a class="btn btn-ghost" href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener">Ouvrir Cloud Console (Test users)</a><button class="btn btn-primary" data-close>Fermer</button>`,
+      });
+    } else {
+      toast(msg, { type: 'error', duration: msg.length > 200 ? 10000 : 7000 });
+    }
+  }
+
   driveConnect.onclick = async () => {
     driveConnect.disabled = true;
-    try { await signIn({ prompt: true }); } catch (e) { toast(e.message, { type: 'error', duration: 7000 }); }
+    try { await signIn({ prompt: true }); } catch (e) { showDriveError(e); } finally { refreshDriveUI(); }
   };
   driveDisconnect.onclick = async () => {
     if (await confirm('Se déconnecter de Google Drive ?<br>La sauvegarde restera sur votre Drive, mais EuroPilot n’y aura plus accès jusqu’à la prochaine connexion.', { title: 'Déconnexion', okLabel: 'Se déconnecter', danger: false })) {
@@ -240,15 +276,15 @@ export function render(root, { navigate }) {
   };
   driveSyncBtn.onclick = async () => {
     driveSyncBtn.disabled = true;
-    try { await syncNow({ direction: 'auto' }); } catch (e) { console.error(e); toast('Sync : ' + e.message, { type: 'error', duration: 7000 }); } finally { refreshDriveUI(); }
+    try { await syncNow({ direction: 'auto' }); } catch (e) { showDriveError(e); } finally { refreshDriveUI(); }
   };
   drivePush.onclick = async () => {
     drivePush.disabled = true;
-    try { await pushToDrive(); } catch (e) { console.error(e); toast('Envoi : ' + e.message, { type: 'error', duration: 7000 }); } finally { refreshDriveUI(); }
+    try { await pushToDrive(); } catch (e) { showDriveError(e); } finally { refreshDriveUI(); }
   };
   drivePull.onclick = async () => {
     drivePull.disabled = true;
-    try { await pullFromDrive({ confirmOverwrite: true }); } catch (e) { console.error(e); toast('Restauration : ' + e.message, { type: 'error', duration: 7000 }); } finally { refreshDriveUI(); }
+    try { await pullFromDrive({ confirmOverwrite: true }); } catch (e) { showDriveError(e); } finally { refreshDriveUI(); }
   };
   driveAuto.onchange = (e) => setAutoSync(e.target.checked);
 }
