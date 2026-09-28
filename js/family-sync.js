@@ -403,16 +403,44 @@ export async function pushToFamily() {
     const jsonStr = JSON.stringify(payload);
     const b64 = await encryptFamilyPayload(jsonStr, code);
     const endpoint = getEndpoint();
+    const tryKeyValueFallback = async () => {
+      // fallback direct vers keyvalue sans passer par la config cachée
+      await putKeyValueChunked(code, b64);
+    };
     if (endpoint.includes('keyvalue.immanuel.co')) {
       await putKeyValueChunked(code, b64);
     } else if (endpoint.includes('jsonstorage.net')) {
-      await putJsonStorage(url, b64, payload.updatedAt);
+      try {
+        await putJsonStorage(url, b64, payload.updatedAt);
+      } catch (e) {
+        if (String(e.message).includes('404') && String(e.message).includes('Item not found')) {
+          // jsonstorage PUT sur salon vide → fallback keyvalue
+          await tryKeyValueFallback();
+        } else throw e;
+      }
     } else if (endpoint.includes('kvdb.io')) {
-      await ensureKvdbBucket();
-      const kvUrl = familyUrl(code);
-      await familyFetch(kvUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: b64 });
+      try {
+        await ensureKvdbBucket();
+        const kvUrl = familyUrl(code);
+        await familyFetch(kvUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: b64 });
+      } catch (e) {
+        const msg = String(e.message);
+        if (msg.includes('403') && /email.*not verified/i.test(msg)) {
+          console.warn('[family] kvdb 403 → fallback keyvalue', msg);
+          await tryKeyValueFallback();
+        } else if (msg.includes('404') && /bucket/i.test(msg)) {
+          console.warn('[family] kvdb bucket invalid → fallback keyvalue', msg);
+          await tryKeyValueFallback();
+        } else throw e;
+      }
     } else {
-      await familyFetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: b64 });
+      try {
+        await familyFetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: b64 });
+      } catch (e) {
+        // dernier recours : keyvalue
+        console.warn('[family] endpoint générique échoué → fallback keyvalue', e);
+        await tryKeyValueFallback();
+      }
     }
     saveFamilyMeta({ lastSync: new Date().toISOString() });
     saveMetaExtra({ lastUpdatedAt: payload.updatedAt });
@@ -431,6 +459,9 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
   try {
     const endpoint = getEndpoint();
     let b64 = '';
+    const tryKeyValueRead = async () => {
+      try { return await getKeyValueChunked(code); } catch (e) { console.warn('[family] fallback keyvalue read échoué', e); return null; }
+    };
     if (endpoint.includes('keyvalue.immanuel.co')) {
       b64 = await getKeyValueChunked(code);
       if (!b64) {
@@ -438,17 +469,37 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
         return null;
       }
     } else if (endpoint.includes('jsonstorage.net')) {
-      b64 = await getJsonStorage(url);
+      try {
+        b64 = await getJsonStorage(url);
+      } catch (e) {
+        if (String(e.message).includes('Item not found') || String(e.message).includes('404')) {
+          b64 = await tryKeyValueRead();
+        } else throw e;
+      }
       if (!b64) {
         toast('Salon vide — fais « Envoyer » sur l\'appareil qui a des données, puis « Restaurer » ici', { type: 'info', duration: 6000 });
         return null;
       }
     } else {
-      const res = await familyFetch(url, { method: 'GET' });
-      b64 = (await res.text()).trim();
+      try {
+        const res = await familyFetch(url, { method: 'GET' });
+        b64 = (await res.text()).trim();
+      } catch (e) {
+        const msg = String(e.message);
+        if (msg.includes('403') && /email/i.test(msg)) {
+          console.warn('[family] kvdb 403 read → fallback keyvalue');
+          b64 = await tryKeyValueRead();
+        } else if (msg.includes('404') && /bucket/i.test(msg)) {
+          b64 = await tryKeyValueRead();
+        } else throw e;
+      }
       if (!b64) {
-        toast('Salon vide — fais « Envoyer » sur l\'appareil qui a des données', { type: 'info', duration: 6000 });
-        return null;
+        // si kvdb a échoué et fallback n'a rien trouvé non plus
+        if (!b64) b64 = await tryKeyValueRead();
+        if (!b64) {
+          toast('Salon vide — fais « Envoyer » sur l\'appareil qui a des données', { type: 'info', duration: 6000 });
+          return null;
+        }
       }
     }
     if (!b64) {
