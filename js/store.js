@@ -1,14 +1,14 @@
 // ============================================================
 // store.js — État de l'application et persistance locale (localStorage)
 //
-// Par défaut toutes les données restent sur l'appareil de l'utilisateur
-// (localStorage). La synchronisation Google Drive est optionnelle,
-// chiffrée côté transport (HTTPS) et stockée dans le Drive personnel
-// de l'utilisateur (appDataFolder, invisible dans My Drive).
+// Par défaut toutes les données restent sur l'appareil. La
+// synchronisation Famille (par code partagé) est optionnelle, chiffrée
+// côté client (AES-GCM dérivée du code) et centralisée via un petit
+// backend (kvdb.io par défaut, remplaçable).
 //
 // Structure des données :
 //   version      : number (schéma)
-//   updatedAt    : ISO string — dernière mutation (pour conflit Drive)
+//   updatedAt    : ISO string — dernière mutation (conflit last-write-wins)
 //   transactions : [{ id, date, amount, type, categoryId, sub, description,
 //                     paymentId, accountId, recurringId, note }]
 //   categories   : [{ id, name, icon, color, type, subs[] }]
@@ -19,7 +19,7 @@
 //                    accountId, frequency, interval, startDate, endDate,
 //                    nextDate, active }]
 //   settings     : { theme, defaultAccount, defaultPayment, onboarded, ...,
-//                    drive: { clientId, autoSync, lastSync, fileId } }
+//                    family: { code, lastSync, autoSync } }
 // ============================================================
 
 import { DEFAULT_ACCOUNTS, DEFAULT_CATEGORIES, DEFAULT_PAYMENT_METHODS } from './defaults.js';
@@ -45,22 +45,28 @@ const emptyState = () => ({
     defaultPayment: 'cb',
     onboarded: false,
     demoLoaded: false,
-    drive: { clientId: '', autoSync: false, lastSync: null, fileId: null },
+    family: { code: '', lastSync: null, autoSync: false },
   },
 });
 
 let state = load();
 
-/** Charge depuis localStorage (ou état vide) — avec migration drive */
+/** Charge depuis localStorage (ou état vide) — avec migration drive → famille */
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return emptyState();
     const parsed = JSON.parse(raw);
     const base = emptyState();
-    // migration douce : conserve drive même si absent de la sauvegarde
-    const mergedSettings = { ...base.settings, ...(parsed.settings || {}), drive: { ...base.settings.drive, ...(parsed.settings?.drive || {}) } };
-    // migrated updatedAt: si absent, on prend la date de la sauvegarde ou maintenant
+    // migration : family remplace drive (on conserve le code si présent)
+    const familyFromDrive = parsed.settings?.drive?.clientId ? { code: '', lastSync: parsed.settings.drive.lastSync || null, autoSync: !!parsed.settings.drive.autoSync } : {};
+    const mergedSettings = {
+      ...base.settings,
+      ...(parsed.settings || {}),
+      family: { ...base.settings.family, ...familyFromDrive, ...(parsed.settings?.family || {}) },
+    };
+    // nettoie l'ancien drive
+    delete mergedSettings.drive;
     const merged = { ...base, ...parsed, settings: mergedSettings };
     if (!merged.updatedAt && parsed.transactions?.length) merged.updatedAt = new Date().toISOString();
     return merged;
@@ -207,13 +213,12 @@ export const store = {
 
   // ----- Paramètres -----
   setSetting(k, v) {
-    // supporte setSetting('drive', {...}) mais aussi setSetting('theme', 'dark')
     state.settings[k] = v;
     save();
   },
-  /** Mise à jour partielle de settings.drive sans écraser les autres clés */
-  setDriveSettings(patch) {
-    state.settings.drive = { ...(state.settings.drive || {}), ...patch };
+  /** Mise à jour partielle de settings.family */
+  setFamilySettings(patch) {
+    state.settings.family = { ...(state.settings.family || {}), ...patch };
     save();
   },
 
@@ -227,12 +232,12 @@ export const store = {
       ...base,
       ...data,
       updatedAt: data.updatedAt || new Date().toISOString(),
-      settings: { ...base.settings, ...(data.settings || {}), drive: { ...base.settings.drive, ...(data.settings?.drive || {}) } },
+      settings: { ...base.settings, ...(data.settings || {}), family: { ...base.settings.family, ...(data.settings?.family || {}) } },
     };
     state.transactions = state.transactions.map(normalizeTx);
     save();
   },
-  /** Remplacement sans undo (utilisé par la sync Drive quand on a confirmé) */
+  /** Remplacement sans undo (utilisé par la sync famille) */
   replaceAll(data) {
     if (!data || !Array.isArray(data.transactions)) throw new Error('Fichier de sauvegarde invalide');
     const base = emptyState();
@@ -240,21 +245,21 @@ export const store = {
       ...base,
       ...data,
       updatedAt: data.updatedAt || new Date().toISOString(),
-      settings: { ...base.settings, ...(data.settings || {}), drive: { ...base.settings.drive, ...(data.settings?.drive || {}) } },
+      settings: { ...base.settings, ...(data.settings || {}), family: { ...base.settings.family, ...(data.settings?.family || {}) } },
     };
     state.transactions = state.transactions.map(normalizeTx);
-    // on conserve le drive fileId local
     save();
   },
   /** Suppression définitive de toutes les données */
   wipe() {
     undoStack.length = 0;
-    const prevDrive = state.settings.drive;
+    const prevFamily = state.settings.family;
     state = emptyState();
     state.settings.onboarded = true;
-    // on conserve le Client ID Drive pour éviter de le ressaisir, mais on réinitialise le reste
-    state.settings.drive = { ...state.settings.drive, clientId: prevDrive?.clientId || '' };
+    // on conserve le code famille pour éviter de le ressaisir
+    state.settings.family = { ...state.settings.family, code: prevFamily?.code || '' };
     localStorage.removeItem(KEY);
+    try { localStorage.removeItem('europilot.family.v1'); localStorage.removeItem('europilot.family.meta.v1'); } catch {}
     try { localStorage.removeItem('europilot.drive.token.v1'); localStorage.removeItem('europilot.drive.meta.v1'); } catch {}
     save();
   },
