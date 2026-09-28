@@ -31,7 +31,7 @@ EuroPilot est une application web **open source** de gestion financière personn
 | Module | Détails |
 |---|---|
 | **Tableau de bord** | Solde actuel, revenus/dépenses du mois, reste à vivre, moyenne quotidienne, revenus/dépenses de l'année, évolution vs mois précédent, graphiques revenus/dépenses et par catégorie, principales catégories, budgets du mois, dernières opérations. |
-| **Famille** | Synchronisation **optionnelle et ultra simple** par code `EURO-XXXX` : ID de salon + clé AES-GCM 256 (PBKDF2 120k). Données chiffrées côté téléphone, aucun compte Google. Backend au choix : **Firebase Realtime Database** (par défaut, gratuit, voir `FIREBASE_SETUP.md`) ou **Worker Cloudflare 1-clic** (`worker/worker.js`, `WORKER_SETUP.md`) ou **Supabase** (`SUPABASE_SETUP.md`) — ancien `kvdb.io` remplacé (403/500). Fallback QR/lien/fichier hors ligne, *last-write-wins* sur `updatedAt`, auto-sync 2 s. |
+| **Famille** | Synchronisation **optionnelle et ultra simple** par code `EURO-XXXX` : ID de salon + clé AES-GCM 256 (PBKDF2 120k). Données chiffrées côté téléphone. Backend au choix : **Firebase Realtime Database** (par défaut, gratuit, voir `FIREBASE_SETUP.md`) ou **Worker Cloudflare 1-clic** (`worker/worker.js`, `WORKER_SETUP.md`) ou **Supabase** (`SUPABASE_SETUP.md`) — ancien `kvdb.io` remplacé (403/500). Fallback QR/lien/fichier hors ligne, *last-write-wins* sur `updatedAt`, auto-sync 2 s. |
 | **Transactions** | Ajout rapide (date, montant, type, catégorie, sous-catégorie, description, moyen de paiement, compte, récurrence, note). Recherche instantanée et filtres : période, année, mois, dates personnalisées, type, catégorie, compte, moyen de paiement, montant min/max. Suivi mensuel avec dépenses par catégorie et comparaison avec les mois précédents. Export CSV/JSON de la sélection. |
 | **Calendrier** | Vue mensuelle avec total quotidien, carte de chaleur des dépenses, détail des opérations du jour sélectionné, ajout direct à une date. |
 | **Budgets** | Budget mensuel par catégorie : *Budget / Dépensé / Reste*, barre de progression, alertes visuelles à 80 % et au dépassement, reste par jour. |
@@ -150,7 +150,7 @@ Points d'attention :
 
 ## Synchronisation Famille (par code partagé)
 
-EuroPilot reste **100 % local par défaut**. La synchronisation Famille est **100 % optionnelle**, ne demande **aucun compte Google ni Client ID**, et centralise les données pour les alimenter **à plusieurs** avec un seul code.
+EuroPilot reste **100 % local par défaut**. La synchronisation Famille est **100 % optionnelle** et centralise les données pour les alimenter **à plusieurs** avec un seul code.
 
 ### Principe
 
