@@ -16,10 +16,11 @@
 //  - Résolution de conflit : last-write-wins via updatedAt (ISO).
 //  - Auto-sync : debounce 2s après chaque mutation si activé et salon rejoint.
 //
-// Backend par défaut : https://kvdb.io — KV gratuit, CORS, bucket fixe
-// (créé à la demande via POST email, stocké en localStorage), clé = CODE.
-// Le contenu est chiffré côté client, le serveur ne voit que du base64.
-// Surchargeable pour Supabase/Firebase. jsonstorage.net conservé en fallback.
+// Backend par défaut : https://keyvalue.immanuel.co — KV gratuit, CORS,
+// sans email, bucket = appKey fyq2n3yb, clé = CODE. Le contenu est chiffré
+// côté client, le serveur ne voit que du base64. Découpé en chunks 900
+// (limite 1024). kvdb.io (403 email not verified) et jsonstorage.net
+// (404 PUT) conservés en fallback.
 // ============================================================
 
 import { store } from './store.js';
@@ -150,13 +151,17 @@ function familyUrl(code) {
   const c = formatCode(code);
   const base = getEndpoint().replace(/\/+$/, '');
   if (!base) return null;
+  if (base.includes('keyvalue.immanuel.co')) {
+    // keyvalue : https://keyvalue.immanuel.co/api/KeyVal/<appKey>/<CODE>
+    // Le CODE est la clé, la valeur est le base64 découpé en chunks
+    // familyUrl retourne la base + appKey + code (pour GET du meta)
+    const appKey = FAMILY_SYNC_KEY || 'fyq2n3yb';
+    return `${base}/${encodeURIComponent(appKey)}/${encodeURIComponent(c)}`;
+  }
   if (base.includes('jsonstorage.net')) {
-    // jsonstorage : https://api.jsonstorage.net/v1/json/europilot/EURO-XXXX
     return `${base}/${encodeURIComponent(c)}`;
   }
   if (base.includes('kvdb.io')) {
-    // kvdb.io : bucket fixe + code comme clé (évite "Bucket is invalid")
-    // Le bucket est créé une fois et stocké en localStorage
     const bucket = getKvdbBucketSync();
     return `${base}/${encodeURIComponent(bucket)}/${encodeURIComponent(c)}`;
   }
@@ -202,9 +207,11 @@ async function familyFetch(url, opts = {}) {
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
     const body = txt.slice(0, 300);
-    // message plus explicite pour le bug "Bucket is invalid" rencontré
+    if (res.status === 403 && /email.*not verified/i.test(body)) {
+      throw new Error(`Sync famille 403 — email not verified (kvdb.io). Le backend kvdb exige une vérification d'email. Le nouveau défaut est https://keyvalue.immanuel.co (sans email) — fais un hard refresh (Ctrl+Shift+R) pour récupérer la nouvelle config, ou passe en QR/fichier. Détail: ${body.slice(0,120)}`);
+    }
     if (res.status === 404 && /bucket/i.test(body)) {
-      throw new Error(`Sync famille 404 — Bucket invalide. Le backend actuel (${getEndpoint()}) n'accepte pas le code comme bucket. Le nouveau défaut est https://api.jsonstorage.net/v1/json/europilot (bucket fixe + code comme clé). Vérifie que ton app est à jour (hard refresh) ou passe en partage manuel QR/fichier. Détail: ${body.slice(0,120)}`);
+      throw new Error(`Sync famille 404 — Bucket invalide. Le backend actuel (${getEndpoint()}) n'accepte pas le code comme bucket. Le nouveau défaut est https://keyvalue.immanuel.co (bucket fixe + code comme clé). Vérifie que ton app est à jour (hard refresh) ou passe en partage manuel QR/fichier. Détail: ${body.slice(0,120)}`);
     }
     throw new Error(`Sync famille ${res.status} — ${body || res.statusText}`);
   }
@@ -254,6 +261,81 @@ async function getJsonStorage(url) {
     throw new Error('Données famille invalides (jsonstorage)');
   }
   return j.data;
+}
+// keyvalue helpers (chunks 900 pour limite 1024)
+const KV_CHUNK_SIZE = 900;
+async function putKeyValueChunked(code, b64) {
+  const base = getEndpoint().replace(/\/+$/, '');
+  const appKey = FAMILY_SYNC_KEY || 'fyq2n3yb';
+  const chunks = [];
+  for (let i = 0; i < b64.length; i += KV_CHUNK_SIZE) chunks.push(b64.slice(i, i + KV_CHUNK_SIZE));
+  // d'abord le meta (nombre de chunks)
+  const metaUrl = `${base}/UpdateValue/${encodeURIComponent(appKey)}/${encodeURIComponent(code + '-meta')}/${chunks.length}`;
+  let res = await fetch(metaUrl, { method: 'POST' });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
+  }
+  // puis chaque chunk
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const url = `${base}/UpdateValue/${encodeURIComponent(appKey)}/${encodeURIComponent(code + '-' + i)}/${encodeURIComponent(chunk)}`;
+    res = await fetch(url, { method: 'POST' });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
+    }
+  }
+  // compat : stocke aussi le b64 complet si <1024 pour anciens clients
+  if (b64.length <= KV_CHUNK_SIZE) {
+    const singleUrl = `${base}/UpdateValue/${encodeURIComponent(appKey)}/${encodeURIComponent(code)}/${encodeURIComponent(b64)}`;
+    try { await fetch(singleUrl, { method: 'POST' }); } catch {}
+  }
+  // nettoie les anciens chunks si le nouveau est plus court
+  try {
+    const oldMetaRes = await fetch(`${base}/GetValue/${encodeURIComponent(appKey)}/${encodeURIComponent(code + '-meta')}`, { method: 'GET' });
+    // on ne supprime pas vraiment, on écrase juste le meta
+  } catch {}
+  return res;
+}
+async function getKeyValueChunked(code) {
+  const base = getEndpoint().replace(/\/+$/, '');
+  const appKey = FAMILY_SYNC_KEY || 'fyq2n3yb';
+  // d'abord essaie le format chunké (meta)
+  try {
+    const metaRes = await fetch(`${base}/GetValue/${encodeURIComponent(appKey)}/${encodeURIComponent(code + '-meta')}`, { method: 'GET' });
+    if (metaRes.ok) {
+      const metaTxt = await metaRes.text().catch(() => '');
+      const num = parseInt(metaTxt.trim(), 10);
+      if (!isNaN(num) && num > 0 && num < 100) {
+        let b64 = '';
+        for (let i = 0; i < num; i++) {
+          const r = await fetch(`${base}/GetValue/${encodeURIComponent(appKey)}/${encodeURIComponent(code + '-' + i)}`, { method: 'GET' });
+          if (!r.ok) throw new Error(`Sync famille ${r.status} — chunk ${i} manquant`);
+          const chunk = (await r.text()).trim().replace(/^"|"$/g, '');
+          b64 += chunk;
+        }
+        if (b64) return b64;
+      }
+    }
+  } catch (e) {
+    // fallback vers single key
+    console.warn('[family] chunked read failed, fallback single', e);
+  }
+  // fallback : single key (ancien format)
+  const res = await fetch(`${base}/GetValue/${encodeURIComponent(appKey)}/${encodeURIComponent(code)}`, { method: 'GET' });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    if (res.status === 404 || /not found/i.test(txt) || txt.trim() === 'null' || txt.trim() === '') {
+      return null;
+    }
+    throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
+  }
+  const txt = await res.text().catch(() => '');
+  const cleaned = txt.trim().replace(/^"|"$/g, '');
+  if (!cleaned || cleaned === 'null' || cleaned === 'undefined') return null;
+  // si le contenu est déjà un base64 complet, on le retourne
+  return cleaned;
 }
 
 // ---------- Payload ----------
@@ -321,12 +403,13 @@ export async function pushToFamily() {
     const jsonStr = JSON.stringify(payload);
     const b64 = await encryptFamilyPayload(jsonStr, code);
     const endpoint = getEndpoint();
-    if (endpoint.includes('jsonstorage.net')) {
+    if (endpoint.includes('keyvalue.immanuel.co')) {
+      await putKeyValueChunked(code, b64);
+    } else if (endpoint.includes('jsonstorage.net')) {
       await putJsonStorage(url, b64, payload.updatedAt);
     } else if (endpoint.includes('kvdb.io')) {
-      // kvdb : s'assure que le bucket existe d'abord
       await ensureKvdbBucket();
-      const kvUrl = familyUrl(code); // recalculé après création bucket
+      const kvUrl = familyUrl(code);
       await familyFetch(kvUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: b64 });
     } else {
       await familyFetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: b64 });
@@ -348,7 +431,13 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
   try {
     const endpoint = getEndpoint();
     let b64 = '';
-    if (endpoint.includes('jsonstorage.net')) {
+    if (endpoint.includes('keyvalue.immanuel.co')) {
+      b64 = await getKeyValueChunked(code);
+      if (!b64) {
+        toast('Salon vide — fais « Envoyer » sur l\'appareil qui a des données, puis « Restaurer » ici', { type: 'info', duration: 6000 });
+        return null;
+      }
+    } else if (endpoint.includes('jsonstorage.net')) {
       b64 = await getJsonStorage(url);
       if (!b64) {
         toast('Salon vide — fais « Envoyer » sur l\'appareil qui a des données, puis « Restaurer » ici', { type: 'info', duration: 6000 });
@@ -400,6 +489,7 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
   const url = familyUrl(code);
   if (!url) throw new Error('Aucun backend');
   const endpoint = getEndpoint();
+  const isKeyValue = endpoint.includes('keyvalue.immanuel.co');
   const isJsonStorage = endpoint.includes('jsonstorage.net');
   const isKvdb = endpoint.includes('kvdb.io');
   setSyncing(true);
@@ -408,7 +498,9 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
     let remoteUpdatedAt = null;
     try {
       let b64 = '';
-      if (isJsonStorage) {
+      if (isKeyValue) {
+        b64 = await getKeyValueChunked(code);
+      } else if (isJsonStorage) {
         b64 = await getJsonStorage(url);
       } else {
         if (isKvdb) await ensureKvdbBucket();
@@ -434,7 +526,9 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
     const doPush = async () => {
       const payload = buildFamilyPayload();
       const b64 = await encryptFamilyPayload(JSON.stringify(payload), code);
-      if (isJsonStorage) {
+      if (isKeyValue) {
+        await putKeyValueChunked(code, b64);
+      } else if (isJsonStorage) {
         await putJsonStorage(url, b64, payload.updatedAt);
       } else if (isKvdb) {
         await ensureKvdbBucket();
