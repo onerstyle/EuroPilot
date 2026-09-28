@@ -153,7 +153,7 @@ function getEndpoint() {
   // Preview e2b auto : si on est sur https://8000-xxx.e2b.app et que la config est encore en REPLACE_ME,
   // on pointe automatiquement vers le Worker preview https://8787-xxx.e2b.app (mémoire volatile, pour tester immédiatement)
   try {
-    const isPlaceholder = (typeof FAMILY_SYNC_ENDPOINT === 'string' && FAMILY_SYNC_ENDPOINT.includes('REPLACE_ME'));
+    const isPlaceholder = (typeof FAMILY_SYNC_ENDPOINT === 'string' && FAMILY_SYNC_ENDPOINT.includes('REPLACE_ME')) || isFirebasePlaceholder() || isSupabasePlaceholder();
     if (isPlaceholder && typeof location !== 'undefined' && location.hostname && location.hostname.includes('e2b.app')) {
       const workerHost = location.hostname.replace(/^8000-/, '8787-');
       if (workerHost !== location.hostname) return `https://${workerHost}`;
@@ -183,12 +183,15 @@ export function setFamilyEndpoint(url, key) {
   } catch {}
 }
 export function getFamilyEndpointInfo() {
-  return { endpoint: getEndpoint(), key: getFamilySyncKey(), isPlaceholder: isSupabasePlaceholder() };
+  return { endpoint: getEndpoint(), key: getFamilySyncKey(), isPlaceholder: isSupabasePlaceholder() || isFirebasePlaceholder() };
 }
 function familyUrl(code) {
   const c = formatCode(code);
   const base = getEndpoint().replace(/\/+$/, '');
   if (!base) return null;
+  if (isFirebaseEndpoint(base)) {
+    return `${base}/${encodeURIComponent(c)}.json`;
+  }
   if (base.includes('supabase.co')) {
     return `${base}?code=eq.${encodeURIComponent(c)}`;
   }
@@ -436,14 +439,67 @@ async function getSupabase(code) {
   if (!j || !Array.isArray(j) || j.length === 0) return null;
   return j[0].data;
 }
+// Firebase helpers (Realtime Database)
+function isFirebaseEndpoint(ep) {
+  const s = ep || '';
+  return s.includes('firebaseio.com') || s.includes('firebasedatabase.app') || s.includes('firebasedatabase.googleapis.com');
+}
+function isFirebasePlaceholder() {
+  const ep = getEndpoint() || '';
+  return ep.includes('REPLACE_ME');
+}
+async function putFirebase(code, b64) {
+  const base = getEndpoint().replace(/\/+$/, '');
+  const url = `${base}/${encodeURIComponent(code)}.json`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(b64)
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    if (res.status === 401 || res.status === 403 || txt.includes('Permission denied')) {
+      throw new Error(`Firebase Permission denied — vérifie Realtime Database → Rules : {"rules":{"family":{".read":true,".write":true}}} et l'URL https://<projet>-default-rtdb.europe-west1.firebasedatabase.app/family`);
+    }
+    throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
+  }
+  return res;
+}
+async function getFirebase(code) {
+  const base = getEndpoint().replace(/\/+$/, '');
+  const url = `${base}/${encodeURIComponent(code)}.json`;
+  const res = await fetch(url, { method: 'GET' });
+  if (!res.ok) {
+    if (res.status === 404) return null;
+    const txt = await res.text().catch(() => '');
+    throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
+  }
+  const j = await res.json().catch(() => null);
+  if (j === null) return null;
+  if (typeof j === 'string') return j;
+  if (j && typeof j === 'object' && typeof j.data === 'string') return j.data;
+  // si jamais stocké comme objet {data, updatedAt} en stringify double
+  if (j && typeof j === 'object' && j.data) return String(j.data);
+  return null;
+}
 async function showFamilySetupHelp(title, detail) {
   try {
     const { openModal } = await import('./ui.js');
-    openModal({
-      title,
-      content: `<p><b>Supabase non configuré</b></p><p>${detail}</p><p class="muted small">Endpoint actuel : <code>${getEndpoint()}</code></p><ol class="muted small" style="text-align:left"><li>Crée un projet sur <a href="https://supabase.com/dashboard" target="_blank">supabase.com/dashboard</a></li><li>SQL Editor → crée la table <code>family</code> (voir SUPABASE_SETUP.md)</li><li>Dans la console (F12), colle :<br><code style="word-break:break-all">localStorage.setItem('europilot.family.endpoint','https://xxx.supabase.co/rest/v1/family'); localStorage.setItem('europilot.family.key','eyJ...'); location.reload();</code></li></ol><p class="muted small">En attendant, utilise le QR / fichier ci-dessous :</p>`,
-      footer: `<button class="btn btn-primary" data-close>Fermer</button>`
-    });
+    const ep = getEndpoint() || '';
+    const isFb = isFirebaseEndpoint(ep);
+    if (isFb) {
+      openModal({
+        title,
+        content: `<p><b>Firebase non configuré</b></p><p>${detail}</p><p class="muted small">Endpoint actuel : <code>${getEndpoint()}</code></p><ol class="muted small" style="text-align:left"><li>Va sur <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> → Create project → Realtime Database (europe-west1, test mode)</li><li>Copie l'URL : <code>https://xxx-default-rtdb.europe-west1.firebasedatabase.app/family</code></li><li>Dans la console (F12), colle :<br><code style="word-break:break-all">localStorage.setItem('europilot.family.endpoint','https://xxx-default-rtdb.europe-west1.firebasedatabase.app/family'); localStorage.removeItem('europilot.family.key'); location.reload();</code></li></ol><p class="muted small">Voir FIREBASE_SETUP.md — En attendant, utilise le QR / fichier :</p>`,
+        footer: `<button class="btn btn-primary" data-close>Fermer</button>`
+      });
+    } else {
+      openModal({
+        title,
+        content: `<p><b>Supabase non configuré</b></p><p>${detail}</p><p class="muted small">Endpoint actuel : <code>${getEndpoint()}</code></p><ol class="muted small" style="text-align:left"><li>Crée un projet sur <a href="https://supabase.com/dashboard" target="_blank">supabase.com/dashboard</a></li><li>SQL Editor → crée la table <code>family</code> (voir SUPABASE_SETUP.md)</li><li>Dans la console (F12), colle :<br><code style="word-break:break-all">localStorage.setItem('europilot.family.endpoint','https://xxx.supabase.co/rest/v1/family'); localStorage.setItem('europilot.family.key','eyJ...'); location.reload();</code></li></ol><p class="muted small">Voir aussi WORKER_SETUP.md / FIREBASE_SETUP.md — En attendant, utilise le QR / fichier :</p>`,
+        footer: `<button class="btn btn-primary" data-close>Fermer</button>`
+      });
+    }
   } catch {}
 }
 
@@ -512,7 +568,11 @@ export async function pushToFamily() {
     const jsonStr = JSON.stringify(payload);
     const b64 = await encryptFamilyPayload(jsonStr, code);
     const endpoint = getEndpoint();
+    const isFirebase = isFirebaseEndpoint(endpoint);
     const isSupabase = endpoint.includes('supabase.co');
+    if (isFirebase && isFirebasePlaceholder()) {
+      throw new Error('Firebase non configuré — remplace REPLACE_ME dans js/family-sync-config.js (voir FIREBASE_SETUP.md) puis recharge la page.');
+    }
     if (isSupabase && isSupabasePlaceholder()) {
       throw new Error('Supabase non configuré — remplace REPLACE_ME dans js/family-sync-config.js (voir SUPABASE_SETUP.md) puis recharge la page.');
     }
@@ -520,7 +580,9 @@ export async function pushToFamily() {
       // fallback direct vers keyvalue sans passer par la config cachée
       await putKeyValueChunked(code, b64);
     };
-    if (isSupabase) {
+    if (isFirebase) {
+      await putFirebase(code, b64);
+    } else if (isSupabase) {
       await putSupabase(code, b64, payload.updatedAt);
     } else if (endpoint.includes('keyvalue.immanuel.co')) {
       await putKeyValueChunked(code, b64);
@@ -563,7 +625,7 @@ export async function pushToFamily() {
     toast('Données famille envoyées', { type: 'success' });
   } catch (e) {
     const msg = String(e.message);
-    if (msg.includes('Supabase non configuré') || msg.includes('REPLACE_ME') || msg.includes('Supabase 401') || msg.includes('Table Supabase')) {
+    if (msg.includes('Firebase non configuré') || msg.includes('Supabase non configuré') || msg.includes('REPLACE_ME') || msg.includes('Supabase 401') || msg.includes('Table Supabase') || msg.includes('Firebase Permission')) {
       try {
         const { openModal } = await import('./ui.js');
         const code = getFamilyStatus().code;
@@ -574,7 +636,7 @@ export async function pushToFamily() {
           qrBlock = `<div style="text-align:center;margin-top:12px"><img src="${qrUrl}" style="border:1px solid var(--border);border-radius:12px"><p class="muted small">QR de secours (partage manuel)</p></div>`;
         } catch {}
         openModal({
-          title: 'Configuration Supabase requise',
+          title: 'Configuration requise',
           content: `<p>${msg}</p><p class="muted small">Vois <b>SUPABASE_SETUP.md</b> ou colle dans la console (F12) :</p><pre style="white-space:pre-wrap;word-break:break-all;font-size:11px;border:1px solid var(--border);padding:8px;border-radius:8px">localStorage.setItem('europilot.family.endpoint','https://xxx.supabase.co/rest/v1/family');
 localStorage.setItem('europilot.family.key','eyJ...');
 location.reload();</pre>${qrBlock}`,
@@ -608,7 +670,11 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
   setSyncing(true);
   try {
     const endpoint = getEndpoint();
+    const isFirebasePull = isFirebaseEndpoint(endpoint);
     const isSupabasePull = endpoint.includes('supabase.co');
+    if (isFirebasePull && isFirebasePlaceholder()) {
+      throw new Error('Firebase non configuré — remplace REPLACE_ME dans js/family-sync-config.js (voir FIREBASE_SETUP.md)');
+    }
     if (isSupabasePull && isSupabasePlaceholder()) {
       throw new Error('Supabase non configuré — remplace REPLACE_ME dans js/family-sync-config.js (voir SUPABASE_SETUP.md)');
     }
@@ -616,7 +682,9 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
     const tryKeyValueRead = async () => {
       try { return await getKeyValueChunked(code); } catch (e) { console.warn('[family] fallback keyvalue read échoué', e); return null; }
     };
-    if (isSupabasePull) {
+    if (isFirebasePull) {
+      b64 = await getFirebase(code);
+    } else if (isSupabasePull) {
       b64 = await getSupabase(code);
     } else if (endpoint.includes('keyvalue.immanuel.co')) {
       b64 = await getKeyValueChunked(code);
@@ -682,8 +750,8 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
     return data;
   } catch (e) {
     const msg = String(e.message);
-    if (msg.includes('Supabase non configuré') || msg.includes('REPLACE_ME') || msg.includes('Supabase 401') || msg.includes('Table Supabase')) {
-      await showFamilySetupHelp('Configuration Supabase requise', msg);
+    if (msg.includes('Firebase non configuré') || msg.includes('Supabase non configuré') || msg.includes('REPLACE_ME') || msg.includes('Supabase 401') || msg.includes('Table Supabase') || msg.includes('Firebase Permission')) {
+      await showFamilySetupHelp('Configuration requise', msg);
       throw new Error(msg);
     }
     if (msg.includes('Salon vide') || msg.includes('Item not found') || msg.includes('404')) {
@@ -700,6 +768,7 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
   const url = familyUrl(code);
   if (!url) throw new Error('Aucun backend');
   const endpoint = getEndpoint();
+  const isFirebaseSync = isFirebaseEndpoint(endpoint);
   const isSupabaseSync = endpoint.includes('supabase.co');
   const isKeyValue = endpoint.includes('keyvalue.immanuel.co');
   const isJsonStorage = endpoint.includes('jsonstorage.net');
@@ -710,7 +779,9 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
     let remoteUpdatedAt = null;
     try {
       let b64 = '';
-      if (isSupabaseSync) {
+      if (isFirebaseSync) {
+        b64 = await getFirebase(code);
+      } else if (isSupabaseSync) {
         b64 = await getSupabase(code);
       } else if (isKeyValue) {
         b64 = await getKeyValueChunked(code);
@@ -738,10 +809,13 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
     }
     const localUpdatedAt = store.state.updatedAt || loadMetaExtra().lastUpdatedAt;
     const doPush = async () => {
+      if (isFirebaseSync && isFirebasePlaceholder()) throw new Error('Firebase non configuré — voir FIREBASE_SETUP.md');
       if (isSupabaseSync && isSupabasePlaceholder()) throw new Error('Supabase non configuré — voir SUPABASE_SETUP.md');
       const payload = buildFamilyPayload();
       const b64 = await encryptFamilyPayload(JSON.stringify(payload), code);
-      if (isSupabaseSync) {
+      if (isFirebaseSync) {
+        await putFirebase(code, b64);
+      } else if (isSupabaseSync) {
         await putSupabase(code, b64, payload.updatedAt);
       } else if (isKeyValue) {
         await putKeyValueChunked(code, b64);
@@ -805,8 +879,8 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
     }
   } catch (e) {
     const msg = String(e.message || e);
-    if (msg.includes('Supabase non configuré') || msg.includes('REPLACE_ME') || msg.includes('Supabase 401') || msg.includes('Table Supabase')) {
-      await showFamilySetupHelp('Configuration Supabase requise', msg);
+    if (msg.includes('Firebase non configuré') || msg.includes('Supabase non configuré') || msg.includes('REPLACE_ME') || msg.includes('Supabase 401') || msg.includes('Table Supabase') || msg.includes('Firebase Permission')) {
+      await showFamilySetupHelp('Configuration requise', msg);
     }
     throw e;
   } finally { setSyncing(false); }

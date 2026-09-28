@@ -24,13 +24,13 @@ function cors(extra = {}) {
 function getPathCode(urlStr) {
   try {
     const u = new URL(urlStr, 'http://localhost');
-    const p = u.pathname.replace(/^\/+/, '').replace(/\/+$/, '');
+    const p = u.pathname.replace(/^\/+/, '').replace(/\/+$/, '').replace(/\.json$/, '');
     if (!p || p === 'health' || p.startsWith('rest/')) return null;
-    if (p.startsWith('family/')) return decodeURIComponent(p.slice(7));
+    if (p.startsWith('family/')) return decodeURIComponent(p.slice(7).replace(/\.json$/, '')).toUpperCase();
     if (/^EURO-[A-Z0-9]{4}$/i.test(p)) return p.toUpperCase();
-    const seg = p.split('/').pop();
+    const seg = p.split('/').pop().replace(/\.json$/, '');
     if (/^EURO-[A-Z0-9]{4}$/i.test(seg)) return seg.toUpperCase();
-    return decodeURIComponent(seg);
+    return decodeURIComponent(seg).toUpperCase();
   } catch { return null; }
 }
 

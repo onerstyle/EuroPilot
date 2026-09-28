@@ -1,33 +1,32 @@
 // ============================================================
 // family-sync-config.js — Configuration Sync Famille
 //
-// Backend par défaut : Supabase (REST gratuit, CORS) — alternative 1-clic : Worker Cloudflare (voir WORKER_SETUP.md)
-// Table : family(code text PK, data text, updated_at timestamptz)
-// RLS : policy "Allow all" (for all using true) — données chiffrées
-//       côté client (AES-GCM dérivée du CODE) donc le serveur ne voit que du base64.
+// Backend par défaut : Firebase Realtime Database (gratuit, CORS,
+// persistant, europe-west1). Node : /family/EURO-XXXX.json → base64
+// chiffré AES-GCM côté client (clé = CODE), le serveur ne voit que du base64.
 //
 // Anciens backends (conservés en fallback si l'endpoint pointe encore dessus) :
-// - https://keyvalue.immanuel.co (bucket fyq2n3yb/bq4rx7id) → 500/Failed to fetch instable
-// - kvdb.io (bucket fixe) → 403 email not verified
-// - api.jsonstorage.net → 404 Item not found au PUT sur salon vide
+// - Worker Cloudflare (worker/worker.js, voir WORKER_SETUP.md) — 1-clic, KV/D1
+// - Supabase (voir SUPABASE_SETUP.md) — table family(code PK, data)
+// - https://keyvalue.immanuel.co (fyq2n3yb) → 500/Failed to fetch
+// - kvdb.io → 403 email not verified
+// - api.jsonstorage.net → 404 Item not found
 //
-// Setup Supabase 2 min — voir SUPABASE_SETUP.md :
-//  1. Crée un projet sur supabase.com/dashboard
-//  2. SQL Editor → crée la table family (voir guide)
-//  3. Project Settings → API → copie Project URL + anon key ici
+// Setup Firebase 2 min — voir FIREBASE_SETUP.md :
+//  1. console.firebase.google.com → Create project → Realtime Database (europe-west1, test mode)
+//  2. Copie l'URL : https://<xxx>-default-rtdb.europe-west1.firebasedatabase.app/family
+//  3. Règles : family { ".read": true, ".write": true } → Publish
 //
 // Pour utiliser votre propre backend :
-//  - Worker 1-clic (recommandé) : WORKER_SETUP.md → https://xxx.workers.dev puis F12 : localStorage.setItem('europilot.family.endpoint','https://xxx.workers.dev');location.reload()
-//  - Supabase live (console) : localStorage.setItem('europilot.family.endpoint','https://xxx.supabase.co/rest/v1/family') + localStorage.setItem('europilot.family.key','eyJ...')
-//  - Remplacez FAMILY_SYNC_ENDPOINT / FAMILY_SYNC_KEY
-//  - Laissez vide ("") pour désactiver le cloud et n'utiliser que le
-//    partage manuel (QR / lien / fichier) — utile en mode hors ligne.
-//  - Surcharge au build possible via :
-//      globalThis.__EUROPILOT_FAMILY_ENDPOINT__ = "https://xxx.workers.dev"
+//  - Firebase live (console) : localStorage.setItem('europilot.family.endpoint','https://<xxx>.firebasedatabase.app/family'); localStorage.removeItem('europilot.family.key'); location.reload()
+//  - Worker 1-clic : WORKER_SETUP.md → https://xxx.workers.dev → même commande
+//  - Supabase : localStorage.setItem('europilot.family.endpoint','https://xxx.supabase.co/rest/v1/family') + key
+//  - Remplacez FAMILY_SYNC_ENDPOINT / FAMILY_SYNC_KEY ci-dessous
+//  - Laissez vide ("") pour désactiver le cloud (QR/fichier uniquement)
+//  - Surcharge build : globalThis.__EUROPILOT_FAMILY_ENDPOINT__ = "https://..."
 // ============================================================
 
-// Remplace les deux lignes ci-dessous par tes valeurs Supabase dès le projet créé :
-// ex: "https://abcdefghijk.supabase.co/rest/v1/family"
-export const FAMILY_SYNC_ENDPOINT = "https://REPLACE_ME.supabase.co/rest/v1/family";
-// ex: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-export const FAMILY_SYNC_KEY = "REPLACE_ME_ANON_KEY";
+// Remplace par ton URL Firebase dès le projet créé :
+// ex: "https://europilot-family-default-rtdb.europe-west1.firebasedatabase.app/family"
+export const FAMILY_SYNC_ENDPOINT = "https://REPLACE_ME-default-rtdb.europe-west1.firebasedatabase.app/family";
+export const FAMILY_SYNC_KEY = "";

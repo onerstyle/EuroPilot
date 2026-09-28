@@ -38,18 +38,18 @@ function text(body, status = 200, extra = {}) {
   });
 }
 
-function getPathCode(url) {
-  // /EURO-XXXX  ou /family/EURO-XXXX  ou /
-  const p = new URL(url).pathname.replace(/^\/+/, '').replace(/\/+$/, '');
+function getPathCode(urlStr) {
+  const u = (urlStr instanceof URL) ? urlStr : new URL(urlStr, 'http://localhost');
+  let p = u.pathname.replace(/^\/+/, '').replace(/\/+$/, '').replace(/\.json$/, '');
   if (!p || p === 'health' || p.startsWith('rest/')) return null;
-  // family/EURO-XXXX → EURO-XXXX
-  if (p.startsWith('family/')) return decodeURIComponent(p.slice(7));
-  // EURO-XXXX
+  if (p.startsWith('family/')) {
+    const seg = p.slice(7).replace(/\.json$/, '');
+    return decodeURIComponent(seg).toUpperCase();
+  }
   if (/^EURO-[A-Z0-9]{4}$/i.test(p)) return p.toUpperCase();
-  // fallback: dernier segment
-  const seg = p.split('/').pop();
+  const seg = p.split('/').pop().replace(/\.json$/, '');
   if (/^EURO-[A-Z0-9]{4}$/i.test(seg)) return seg.toUpperCase();
-  return decodeURIComponent(seg);
+  return decodeURIComponent(seg).toUpperCase();
 }
 
 async function kvGet(env, code) {
