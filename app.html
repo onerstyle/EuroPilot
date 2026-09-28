@@ -41,6 +41,15 @@
         </div>
       </header>
 
+      <!-- Bannière Famille (état de synchronisation) -->
+      <div id="family-banner" class="family-banner" hidden role="status" aria-live="polite">
+        <span id="family-banner-icon" aria-hidden="true"></span>
+        <span id="family-banner-text"></span>
+        <span class="spacer"></span>
+        <button id="family-banner-action" class="btn btn-ghost small" hidden></button>
+        <button id="family-banner-close" class="icon-btn small" aria-label="Fermer" title="Fermer">×</button>
+      </div>
+
       <!-- Bandeau de bienvenue (première visite) -->
       <div id="welcome" class="welcome" hidden>
         <div>
@@ -62,6 +71,6 @@
   </div>
 
   <div id="toasts" aria-live="polite"></div>
-  <script type="module" src="js/main.js?v=15"></script>
+  <script type="module" src="js/main.js?v=16"></script>
 </body>
 </html>

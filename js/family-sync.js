@@ -38,6 +38,8 @@ const META_KEY = 'europilot.family.meta.v1'; // { lastUpdatedAt }
 let syncTimer = null;
 let statusListeners = new Set();
 let isSyncing = false;
+let lastError = null;
+let lastErrorAt = null;
 
 // ---------- Persistance locale (code + meta) ----------
 function loadFamilyMeta() {
@@ -136,11 +138,17 @@ export function getFamilyStatus() {
     lastSync: meta.lastSync || s.lastSync || extra.lastSync || null,
     lastUpdatedAt: extra.lastUpdatedAt || store.state.updatedAt || null,
     endpoint: getEndpoint(),
+    lastError,
+    lastErrorAt,
+    isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   };
 }
 function emitStatus() { statusListeners.forEach(fn => fn(getFamilyStatus())); }
 export function onFamilyStatus(fn) { statusListeners.add(fn); return () => statusListeners.delete(fn); }
 function setSyncing(v) { isSyncing = v; emitStatus(); }
+function setLastError(e) { lastError = e ? String(e.message || e).slice(0,200) : null; lastErrorAt = e ? new Date().toISOString() : null; emitStatus(); }
+function clearLastError() { lastError = null; lastErrorAt = null; emitStatus(); }
+export function clearFamilyError() { clearLastError(); }
 
 // ---------- Backend ----------
 function getEndpoint() {
@@ -621,9 +629,11 @@ export async function pushToFamily() {
     }
     saveFamilyMeta({ lastSync: new Date().toISOString() });
     saveMetaExtra({ lastUpdatedAt: payload.updatedAt });
+    clearLastError();
     emitStatus();
     toast('Données famille envoyées', { type: 'success' });
   } catch (e) {
+    setLastError(e);
     const msg = String(e.message);
     if (msg.includes('Firebase non configuré') || msg.includes('Supabase non configuré') || msg.includes('REPLACE_ME') || msg.includes('Supabase 401') || msg.includes('Table Supabase') || msg.includes('Firebase Permission')) {
       try {
@@ -745,10 +755,12 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
     store.importAll(data);
     saveFamilyMeta({ lastSync: new Date().toISOString() });
     saveMetaExtra({ lastUpdatedAt: data.updatedAt || data.exportedAt });
+    clearLastError();
     emitStatus();
     toast(`Données famille restaurées (${data.transactions.length} opérations)`, { type: 'success', duration: 6000 });
     return data;
   } catch (e) {
+    setLastError(e);
     const msg = String(e.message);
     if (msg.includes('Firebase non configuré') || msg.includes('Supabase non configuré') || msg.includes('REPLACE_ME') || msg.includes('Supabase 401') || msg.includes('Table Supabase') || msg.includes('Firebase Permission')) {
       await showFamilySetupHelp('Configuration requise', msg);
@@ -830,6 +842,7 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
       }
       saveFamilyMeta({ lastSync: new Date().toISOString() });
       saveMetaExtra({ lastUpdatedAt: payload.updatedAt });
+      clearLastError();
       emitStatus();
       return payload;
     };
@@ -870,6 +883,7 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
       store.importAll(remote);
       saveFamilyMeta({ lastSync: new Date().toISOString() });
       saveMetaExtra({ lastUpdatedAt: remoteUpdatedAt });
+      clearLastError();
       toast(`Données plus récentes restaurées du ${new Date(remoteUpdatedAt).toLocaleString('fr-FR')}`, { type: 'success' });
       emitStatus();
       return { action: 'pull' };

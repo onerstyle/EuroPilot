@@ -297,6 +297,20 @@ label.check { flex-direction: row; align-items: center; gap: .5rem; font-size: .
 #family-badge { font-size: .72rem; }
 #family-dot, #drive-dot { transition: background .2s, box-shadow .2s; }
 .family-code-box { text-align: center; }
+.family-banner { margin: 1rem 1.5rem 0; padding: .65rem 1rem; border-radius: var(--radius-s); border: 1px solid var(--border); background: var(--bg-2); display: flex; align-items: center; gap: .6rem; font-size: .88rem; font-weight: 500; box-shadow: var(--shadow); max-width: 1280px; align-self: center; width: calc(100% - 3rem); }
+.family-banner[hidden] { display: none !important; }
+.family-banner .spacer { flex: 1; }
+.family-banner #family-banner-icon { font-size: 1.1rem; line-height: 1; }
+.family-banner.ok { background: color-mix(in srgb, var(--green) 10%, var(--bg-2)); border-color: color-mix(in srgb, var(--green) 22%, var(--border)); color: var(--text); }
+.family-banner.syncing { background: color-mix(in srgb, var(--accent) 10%, var(--bg-2)); border-color: color-mix(in srgb, var(--accent) 22%, var(--border)); }
+.family-banner.offline { background: color-mix(in srgb, var(--amber) 14%, var(--bg-2)); border-color: color-mix(in srgb, var(--amber) 24%, var(--border)); }
+.family-banner.error { background: color-mix(in srgb, var(--red) 10%, var(--bg-2)); border-color: color-mix(in srgb, var(--red) 22%, var(--border)); }
+.family-banner.prompt { background: var(--bg-2); border-style: dashed; }
+.family-banner .btn.small { padding: .35rem .7rem; font-size: .82rem; }
+.family-banner .icon-btn.small { width: 28px; height: 28px; font-size: 1rem; }
+@media (max-width: 760px) {
+  .family-banner { margin: .75rem 1rem 0; width: calc(100% - 2rem); padding: .55rem .8rem; font-size: .84rem; flex-wrap: wrap; }
+}
 .family-code-box code, .family-code-box b { font-family: var(--mono); }
 @media (max-width: 760px) {
   .drive-status-grid { grid-template-columns: 1fr; gap: .4rem; }
