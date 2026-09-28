@@ -16,10 +16,10 @@
 //  - Résolution de conflit : last-write-wins via updatedAt (ISO).
 //  - Auto-sync : debounce 2s après chaque mutation si activé et salon rejoint.
 //
-// Backend par défaut : https://api.jsonstorage.net — JSON gratuit, CORS, sans clé,
-// bucket = europilot, clé = CODE. Le contenu est chiffré côté client,
-// le serveur ne voit que du base64. Surchargeable pour Supabase/Firebase.
-// Ancien kvdb.io conservé en fallback (bucket fixe + code = clé).
+// Backend par défaut : https://kvdb.io — KV gratuit, CORS, bucket fixe
+// (créé à la demande via POST email, stocké en localStorage), clé = CODE.
+// Le contenu est chiffré côté client, le serveur ne voit que du base64.
+// Surchargeable pour Supabase/Firebase. jsonstorage.net conservé en fallback.
 // ============================================================
 
 import { store } from './store.js';
@@ -212,13 +212,25 @@ async function familyFetch(url, opts = {}) {
 }
 // helpers jsonstorage
 async function putJsonStorage(url, b64, updatedAt) {
-  const res = await fetch(url, {
+  let res = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ data: b64, updatedAt })
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
+    // jsonstorage renvoie 404 Item not found sur PUT quand l'item n'existe pas encore
+    // On tente alors un POST (création) sur la même URL
+    if (res.status === 404 && /item not found/i.test(txt)) {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: b64, updatedAt })
+      });
+      if (res.ok) return res;
+      const txt2 = await res.text().catch(() => '');
+      throw new Error(`Sync famille ${res.status} — ${txt2.slice(0,200) || res.statusText}`);
+    }
     throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
   }
   return res;
