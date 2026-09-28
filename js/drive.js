@@ -4,7 +4,14 @@
 // Stocke une sauvegarde complète d'EuroPilot dans le Google Drive
 // de l'utilisateur (dossier caché appDataFolder, invisible dans
 // My Drive, isolé par application). Aucune donnée n'est envoyée
-// ailleurs. Le Client ID OAuth2 est configuré côté utilisateur.
+// ailleurs. Le Client ID OAuth2 est configuré côté propriétaire
+// (mode simplifié) ou côté utilisateur (mode avancé).
+//
+// Mode simplifié (recommandé pour famille) : le propriétaire crée UNE
+// SEULE FOIS un Client ID Web et le place dans js/drive-config.js
+// (BUILTIN_CLIENT_ID) ou via globalThis.__EUROPILOT_DRIVE_CLIENT_ID__.
+// Tous les appareils n'ont alors qu'à cliquer sur "Se connecter avec
+// Google" et choisir le compte Gmail partagé — plus de Client ID à saisir.
 //
 // Flux :
 //  - loadGis() charge https://accounts.google.com/gsi/client
@@ -21,6 +28,7 @@
 
 import { store } from './store.js';
 import { toast } from './ui.js';
+import { BUILTIN_CLIENT_ID } from './drive-config.js';
 
 const DRIVE_FILENAME = 'europilot-backup.json';
 const DRIVE_MIME = 'application/json';
@@ -129,17 +137,30 @@ function clearMeta() { localStorage.removeItem(META_KEY); }
 
 // ---------- Client ID ----------
 export function getClientId() {
-  // 1) Réglage utilisateur (prioritaire)
+  // 1) Réglage utilisateur (prioritaire) — mode avancé
   const fromSettings = store.state.settings?.drive?.clientId?.trim();
   if (fromSettings) return fromSettings;
-  // 2) Variable d'environnement build (si injectée)
+  // 2) Variable d'environnement build (si injectée) — ex: Vite define
   if (typeof globalThis.__EUROPILOT_DRIVE_CLIENT_ID__ === 'string' && globalThis.__EUROPILOT_DRIVE_CLIENT_ID__.trim()) {
     return globalThis.__EUROPILOT_DRIVE_CLIENT_ID__.trim();
   }
-  // 3) Placeholder pour dev (à remplacer dans Paramètres)
+  // 3) Client ID préconfiguré dans js/drive-config.js — mode simplifié (famille)
+  //    Le propriétaire le remplit une fois, tous les appareils en profitent.
+  if (typeof BUILTIN_CLIENT_ID === 'string' && BUILTIN_CLIENT_ID.trim()) {
+    return BUILTIN_CLIENT_ID.trim();
+  }
+  // 4) Rien → l'utilisateur doit le saisir dans Paramètres
   return '';
 }
+export function getClientIdSource() {
+  const fromSettings = store.state.settings?.drive?.clientId?.trim();
+  if (fromSettings) return 'custom';
+  if (typeof globalThis.__EUROPILOT_DRIVE_CLIENT_ID__ === 'string' && globalThis.__EUROPILOT_DRIVE_CLIENT_ID__.trim()) return 'builtin-env';
+  if (typeof BUILTIN_CLIENT_ID === 'string' && BUILTIN_CLIENT_ID.trim()) return 'builtin';
+  return 'none';
+}
 export function isDriveConfigured() { return !!getClientId(); }
+export function isSimpleMode() { return getClientIdSource() !== 'none' && getClientIdSource() !== 'custom'; }
 export function isSignedIn() { return !!accessToken && expiresAt > Date.now() + 30_000; }
 
 // ---------- GIS ----------

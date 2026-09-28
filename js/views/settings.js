@@ -10,7 +10,7 @@ import { exportCSV, exportJSON, exportBackup, importCSV, importJSON, readFile } 
 import { applyTheme } from '../main.js';
 import {
   getDriveStatus, onDriveStatus, signIn, signOut, pushToDrive, pullFromDrive, syncNow,
-  setAutoSync, setClientId, formatLastSync
+  setAutoSync, setClientId, formatLastSync, isSimpleMode, getClientIdSource
 } from '../drive.js';
 
 export function render(root, { navigate }) {
@@ -63,25 +63,58 @@ export function render(root, { navigate }) {
         Aucune donnée n'est envoyée à EuroPilot — seul votre Drive est utilisé.
       </p>
 
-      <div class="drive-grid">
-        <label>Client ID OAuth 2.0 Google <small class="muted">(type « Application Web »)</small>
-          <div class="drive-client-row">
-            <input id="drive-client-id" placeholder="1234567890-abc.apps.googleusercontent.com" value="${esc(drive.clientId || '')}" spellcheck="false" autocomplete="off">
-            <button class="btn btn-ghost" id="drive-save-id">Enregistrer</button>
-          </div>
-        </label>
-        <details class="drive-help">
-          <summary class="muted small">Comment obtenir un Client ID ?</summary>
-          <ol class="muted small" style="margin:.5rem 0 0 1.2rem; line-height:1.5">
-            <li>Allez sur <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → Identifiants</a></li>
-            <li>« Créer des identifiants » → <b>ID client OAuth</b> → Type <b>Application Web</b></li>
-            <li>Ajoutez en <b>Origines JavaScript autorisées</b> : <code>${esc(location.origin)}</code></li>
-            <li>Activez l'API <code>Google Drive API</code> dans « API et services → Bibliothèque »</li>
-            <li>Copiez le <b>Client ID</b> et collez-le ci-dessus, puis « Enregistrer »</li>
-          </ol>
-          <p class="muted small" style="margin-top:.6rem">💡 Sans Client ID, les boutons Drive restent désactivés. Vous pouvez aussi définir <code>__EUROPILOT_DRIVE_CLIENT_ID__</code> au build.</p>
-        </details>
-      </div>
+      ${(() => {
+        const simple = isSimpleMode();
+        const source = getClientIdSource();
+        if (simple) {
+          return `
+          <div class="drive-grid">
+            <div class="drive-simple" style="background:var(--green-soft);border:1px solid color-mix(in srgb, var(--green) 25%, transparent);border-radius:9px;padding:.75rem .9rem">
+              <b style="color:var(--green)">✅ Mode simplifié activé</b>
+              <p class="small" style="margin:.35rem 0 0">Plus besoin de Client ID : cliquez simplement sur <b>« Se connecter avec Google »</b> ci-dessous et choisissez le <b>compte Gmail partagé</b> (ex : <code>famille.dupont@gmail.com</code>).<br>
+              <span class="muted">Utilisez le <b>même compte Gmail</b> sur ton téléphone et celui de ta femme pour partager le même budget et la même synchro. Le téléphone n'a pas besoin d'avoir ce compte lié au système, la fenêtre Google s'ouvre au moment de la connexion.</span></p>
+              <p class="muted small" style="margin:.5rem 0 0">Technique : Client ID préconfiguré dans <code>js/drive-config.js</code> (<code>${esc(source)}</code>). Déconnexion possible à tout moment.</p>
+            </div>
+            <details class="drive-help">
+              <summary class="muted small">Mode avancé : utiliser votre propre Client ID ?</summary>
+              <p class="muted small" style="margin:.5rem 0">Si vous déployez votre propre instance d'EuroPilot, remplacez <code>BUILTIN_CLIENT_ID</code> dans <code>js/drive-config.js</code> par votre propre <code>…apps.googleusercontent.com</code> (type Application Web). Sinon laissez vide pour forcer chaque utilisateur à saisir son Client ID ci-dessous.</p>
+              <label>Client ID personnalisé (prioritaire sur le mode simplifié) <small class="muted">— laissez vide pour rester en mode simplifié</small>
+                <div class="drive-client-row">
+                  <input id="drive-client-id" placeholder="1234567890-abc.apps.googleusercontent.com" value="${esc(store.state.settings.drive?.clientId || '')}" spellcheck="false" autocomplete="off">
+                  <button class="btn btn-ghost" id="drive-save-id">Enregistrer</button>
+                </div>
+              </label>
+            </details>
+          </div>`;
+        } else {
+          const hasCustom = !!store.state.settings.drive?.clientId;
+          return `
+          <div class="drive-grid">
+            <div class="drive-simple" style="background:var(--amber-soft);border:1px solid color-mix(in srgb, var(--amber) 25%, transparent);border-radius:9px;padding:.7rem .85rem">
+              <b>⚠️ Mode simplifié non configuré</b>
+              <p class="small muted" style="margin:.3rem 0 0">Le propriétaire peut activer le mode simplifié en renseignant UNE SEULE FOIS le Client ID dans <code>js/drive-config.js</code> (<code>BUILTIN_CLIENT_ID</code>). En attendant, utilisez le mode avancé ci-dessous (ta femme devra aussi le faire, ou tu peux lui partager ta sauvegarde JSON par mail).</p>
+            </div>
+            <label>Client ID OAuth 2.0 Google <small class="muted">(type « Application Web »)</small>
+              <div class="drive-client-row">
+                <input id="drive-client-id" placeholder="1234567890-abc.apps.googleusercontent.com" value="${esc(drive.clientId || '')}" spellcheck="false" autocomplete="off">
+                <button class="btn btn-ghost" id="drive-save-id">Enregistrer</button>
+              </div>
+            </label>
+            <details class="drive-help" ${hasCustom ? '' : 'open'}>
+              <summary class="muted small">Comment obtenir un Client ID ? (5 min, une fois pour tous)</summary>
+              <ol class="muted small" style="margin:.5rem 0 0 1.2rem; line-height:1.5">
+                <li>Allez sur <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → Identifiants</a></li>
+                <li>« Créer des identifiants » → <b>ID client OAuth</b> → Type <b>Application Web</b></li>
+                <li>Ajoutez en <b>Origines JavaScript autorisées</b> : <code>${esc(location.origin)}</code>, <code>https://onerstyle.github.io</code>, <code>capacitor://localhost</code>, <code>http://localhost</code>, <code>https://localhost</code></li>
+                <li>Activez l'API <code>Google Drive API</code> dans « API et services → Bibliothèque »</li>
+                <li>Copiez le <b>Client ID</b> et collez-le ci-dessus, puis « Enregistrer »</li>
+                <li>Dans <b>Écran de consentement → Audience → Test users</b>, ajoutez les Gmails qui utiliseront la synchro (toi + ta femme) → <b>PUBLISH APP</b> pour ne plus avoir à le refaire</li>
+              </ol>
+              <p class="muted small" style="margin-top:.6rem">💡 Astuce : pour activer le mode simplifié pour toute la famille, mets ce même Client ID dans <code>js/drive-config.js</code> et redéploie — plus besoin de le saisir sur chaque téléphone.</p>
+            </details>
+          </div>`;
+        }
+      })()}
 
       <div class="drive-status">
         <div class="drive-status-grid">
@@ -92,7 +125,7 @@ export function render(root, { navigate }) {
       </div>
 
       <div class="btn-row wrap" style="margin-top:.9rem">
-        <button class="btn btn-primary" id="drive-connect" ${drive.configured && !drive.signedIn ? '' : 'disabled'}>🔗 Se connecter</button>
+        <button class="btn btn-primary" id="drive-connect" ${drive.configured && !drive.signedIn ? '' : 'disabled'}>${isSimpleMode() ? '🔗 Se connecter avec Google (compte partagé)' : '🔗 Se connecter'}</button>
         <button class="btn btn-ghost" id="drive-sync" ${drive.signedIn ? '' : 'disabled'}>${drive.syncing ? '⏳ Synchronisation…' : '🔄 Synchroniser maintenant'}</button>
         <button class="btn btn-ghost" id="drive-push" ${drive.signedIn ? '' : 'disabled'}>⬆ Envoyer vers Drive</button>
         <button class="btn btn-ghost" id="drive-pull" ${drive.signedIn ? '' : 'disabled'}>⬇ Restaurer depuis Drive</button>
@@ -104,7 +137,7 @@ export function render(root, { navigate }) {
         Synchronisation automatique <small class="muted">— envoie la sauvegarde 2–3 s après chaque modification (si connecté)</small>
       </label>
       <p class="muted small" id="drive-hint" style="margin-top:.5rem">
-        ${!drive.configured ? '⚠️ Renseignez d’abord votre Client ID Google.' : !drive.signedIn ? 'Connectez-vous pour activer la synchro.' : 'Les conflits sont résolus en « dernier écrit gagne » (comparaison <code>updatedAt</code>).'}
+        ${!drive.configured ? '⚠️ Aucun Client ID : renseignez-le ci-dessus ou activez le mode simplifié (<code>js/drive-config.js</code>).' : !drive.signedIn ? (isSimpleMode() ? '👉 Cliquez sur « Se connecter avec Google » et choisissez le <b>compte Gmail partagé</b> (même compte sur les 2 téléphones pour partager le budget).' : 'Connectez-vous pour activer la synchro.') : 'Les conflits sont résolus en « dernier écrit gagne » (comparaison <code>updatedAt</code>).' }
       </p>
     </div>
 
@@ -195,6 +228,7 @@ export function render(root, { navigate }) {
   const driveClientInput = $('#drive-client-id', root);
 
   function refreshDriveUI(s = getDriveStatus()) {
+    const simple = isSimpleMode();
     if (driveBadge) {
       driveBadge.textContent = s.syncing ? 'Synchronisation…' : s.signedIn ? 'Connecté' : s.configured ? 'Non connecté' : 'Non configuré';
       driveBadge.className = 'badge ' + (s.syncing ? '' : s.signedIn ? 'ok' : s.configured ? 'warn' : '');
@@ -202,13 +236,20 @@ export function render(root, { navigate }) {
     if (driveStatusText) driveStatusText.textContent = s.syncing ? '🔄 Synchronisation…' : s.signedIn ? '🟢 Connecté' : s.configured ? '🟡 En attente de connexion' : '⚪ Non configuré';
     if (driveLastSync) driveLastSync.textContent = formatLastSync(s.lastSync);
     if (driveFileId) driveFileId.textContent = s.fileId ? s.fileId.slice(0, 12) + '…' : '—';
-    if (driveConnect) driveConnect.disabled = !s.configured || s.signedIn || s.syncing;
+    if (driveConnect) {
+      driveConnect.disabled = !s.configured || s.signedIn || s.syncing;
+      driveConnect.textContent = simple ? '🔗 Se connecter avec Google (compte partagé)' : '🔗 Se connecter';
+    }
     if (driveSyncBtn) { driveSyncBtn.disabled = !s.signedIn || s.syncing; driveSyncBtn.textContent = s.syncing ? '⏳ Synchronisation…' : '🔄 Synchroniser maintenant'; }
     if (drivePush) drivePush.disabled = !s.signedIn || s.syncing;
     if (drivePull) drivePull.disabled = !s.signedIn || s.syncing;
     if (driveDisconnect) driveDisconnect.disabled = !s.signedIn;
     if (driveAuto) { driveAuto.checked = !!s.autoSync; driveAuto.disabled = !s.signedIn; }
-    if (driveHint) driveHint.textContent = !s.configured ? '⚠️ Renseignez d’abord votre Client ID Google.' : !s.signedIn ? 'Connectez-vous pour activer la synchro.' : 'Les conflits sont résolus en « dernier écrit gagne » (comparaison updatedAt).';
+    if (driveHint) {
+      if (!s.configured) driveHint.innerHTML = '⚠️ Aucun Client ID : renseignez-le ci-dessus ou activez le mode simplifié (<code>js/drive-config.js</code>).';
+      else if (!s.signedIn) driveHint.innerHTML = simple ? '👉 Cliquez sur « Se connecter avec Google » et choisissez le <b>compte Gmail partagé</b> (même compte sur les 2 téléphones).' : 'Connectez-vous pour activer la synchro.';
+      else driveHint.innerHTML = 'Les conflits sont résolus en « dernier écrit gagne » (comparaison <code>updatedAt</code>).';
+    }
   }
 
   const offDrive = onDriveStatus(refreshDriveUI);
