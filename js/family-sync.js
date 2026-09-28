@@ -280,7 +280,11 @@ async function putKeyValueChunked(code, b64) {
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     const url = `${base}/UpdateValue/${encodeURIComponent(appKey)}/${encodeURIComponent(code + '-' + i)}/${encodeURIComponent(chunk)}`;
-    res = await fetch(url, { method: 'POST' });
+    try {
+      res = await fetch(url, { method: 'POST' });
+    } catch (e) {
+      throw new Error(`Failed to fetch ${url} — ${e.message}`);
+    }
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
       throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
@@ -447,7 +451,22 @@ export async function pushToFamily() {
     emitStatus();
     toast('Données famille envoyées', { type: 'success' });
   } catch (e) {
-    throw new Error(`Envoi famille échoué : ${e.message} — vérifie ta connexion ou utilise le partage par QR / fichier.`);
+    const msg = String(e.message);
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed') || msg.includes('fetch failed')) {
+      // Propose directement le QR en fallback
+      try {
+        const { openModal } = await import('./ui.js');
+        const { code, b64 } = await exportFamilySharePayload();
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(b64.slice(0,800))}`;
+        openModal({
+          title: 'Serveur indispo — partage manuel',
+          content: `<p>Le serveur de synchro est injoignable (<code>${getEndpoint()}</code>). Utilise le QR / fichier en attendant :</p><div style="text-align:center"><img src="${qrUrl}" style="border:1px solid var(--border);border-radius:12px"><p class="muted small">Scanne ce QR sur l'autre appareil ou copie le fichier chiffré.</p></div><p class="muted small">Détail: ${msg.slice(0,120)}</p>`,
+          footer: `<button class="btn btn-primary" data-close>Fermer</button>`
+        });
+      } catch {}
+      throw new Error(`Envoi famille échoué : serveur injoignable (${getEndpoint()}). Utilise le partage par QR / fichier. Détail: ${msg.slice(0,100)}`);
+    }
+    throw new Error(`Envoi famille échoué : ${msg} — vérifie ta connexion ou utilise le partage par QR / fichier.`);
   } finally { setSyncing(false); }
 }
 export async function pullFromFamily({ confirmOverwrite = true } = {}) {
