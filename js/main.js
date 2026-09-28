@@ -6,7 +6,7 @@ import { store } from './store.js';
 import { $, $$, fmtEuro } from './utils.js';
 import { transactionForm, toast, closeModal, confirm } from './ui.js';
 import { processRecurring } from './recurring.js';
-import { initFamilySync, getFamilyStatus, onFamilyStatus } from './family-sync.js';
+import { initFamilySync, getFamilyStatus, onFamilyStatus, syncFamilyNow, clearFamilyError } from './family-sync.js';
 
 /** Table des vues (chargées à la demande) */
 const VIEWS = {
@@ -161,7 +161,99 @@ function updateHeader() {
   if (old) old.remove();
 }
 
-// Abonnement Famille → met à jour le header quand le statut change
-try { onFamilyStatus(() => updateHeader()); } catch {}
+// ---------- Bannière Famille ----------
+let bannerDismissedUntil = 0;
+function formatRel(iso) {
+  if (!iso) return 'jamais';
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  if (diff < 60000) return "à l'instant";
+  if (diff < 3600000) return `il y a ${Math.round(diff/60000)} min`;
+  if (diff < 86400000) return `il y a ${Math.round(diff/3600000)} h`;
+  return d.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+}
+function updateFamilyBanner(fs) {
+  const banner = document.getElementById('family-banner');
+  const icon = document.getElementById('family-banner-icon');
+  const text = document.getElementById('family-banner-text');
+  const action = document.getElementById('family-banner-action');
+  const close = document.getElementById('family-banner-close');
+  if (!banner || !icon || !text) return;
+  // si pas de code, on propose de créer un salon (bannière discrète)
+  if (!fs.hasCode) {
+    if (Date.now() < bannerDismissedUntil) { banner.hidden = true; return; }
+    banner.hidden = false;
+    banner.className = 'family-banner prompt';
+    icon.textContent = '👨‍👩‍👧‍👦';
+    text.textContent = 'Famille non configurée — partagez vos budgets à 2 en un code';
+    action.hidden = false;
+    action.textContent = 'Créer un salon';
+    action.onclick = () => navigate('settings');
+    return;
+  }
+  // si erreur récente (< 5 min) → priorité
+  if (fs.lastError) {
+    banner.hidden = false;
+    banner.className = 'family-banner error';
+    icon.textContent = '🔴';
+    text.textContent = `Erreur synchro : ${fs.lastError.slice(0,120)}`;
+    action.hidden = false;
+    action.textContent = 'Réessayer';
+    action.onclick = async () => { clearFamilyError(); try { await syncFamilyNow({direction:'auto'}); toast('Synchronisation relancée', {type:'info'}); } catch(e){ toast(e.message,{type:'error'});} };
+    return;
+  }
+  if (fs.syncing) {
+    banner.hidden = false;
+    banner.className = 'family-banner syncing';
+    icon.textContent = '🔵';
+    text.textContent = `Synchronisation ${fs.formattedCode}…`;
+    action.hidden = true;
+    return;
+  }
+  if (!fs.isOnline) {
+    banner.hidden = false;
+    banner.className = 'family-banner offline';
+    icon.textContent = '🟡';
+    text.textContent = 'Hors ligne — vos modifs seront envoyées à la reconnexion';
+    action.hidden = true;
+    return;
+  }
+  if (!fs.autoSync) {
+    banner.hidden = false;
+    banner.className = 'family-banner offline';
+    icon.textContent = '⏸️';
+    text.textContent = `Auto-sync désactivée — ${fs.formattedCode} • Dernière sync : ${formatRel(fs.lastSync)}`;
+    action.hidden = false;
+    action.textContent = 'Activer';
+    action.onclick = async () => { const { setFamilyAutoSync } = await import('./family-sync.js'); setFamilyAutoSync(true); toast('Auto-sync activée', {type:'success'}); };
+    return;
+  }
+  // cas nominal : autoSync + hasCode + online + pas d'erreur
+  banner.hidden = false;
+  if (fs.lastSync) {
+    banner.className = 'family-banner ok';
+    icon.textContent = '🟢';
+    text.textContent = `Famille ${fs.formattedCode} — À jour • Sync ${formatRel(fs.lastSync)}`;
+  } else {
+    banner.className = 'family-banner offline';
+    icon.textContent = '🟡';
+    text.textContent = `Famille ${fs.formattedCode} — Pas encore synchronisé`;
+  }
+  action.hidden = false;
+  action.textContent = 'Synchroniser';
+  action.onclick = async () => { try { await syncFamilyNow({direction:'auto'}); } catch(e){ toast(e.message,{type:'error'});} };
+}
+
+// Abonnement Famille → met à jour le header et la bannière quand le statut change
+function onFamilyUpdate() { updateHeader(); try { updateFamilyBanner(getFamilyStatus()); } catch {} }
+try { onFamilyStatus(() => onFamilyUpdate()); } catch {}
+// Fermeture bannière (dismiss 1h)
+document.getElementById('family-banner-close')?.addEventListener('click', () => {
+  const b = document.getElementById('family-banner');
+  if (b) b.hidden = true;
+  bannerDismissedUntil = Date.now() + 3600000;
+});
 
 init();
+// Premier rendu bannière après init
+setTimeout(() => { try { updateFamilyBanner(getFamilyStatus()); } catch {} }, 300);
