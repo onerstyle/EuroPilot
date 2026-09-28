@@ -2,7 +2,7 @@
 // family-sync.js — Synchronisation Famille par code partagé
 //
 // Remplace la synchro Drive (trop complexe) par un système ultra simple :
-// un CODE à 6 caractères (ex: EURO-8K2P) que tu partages à ta femme.
+// un CODE à 6 caractères (ex: EURO-8K2P) que tu partages à ton/ta partenaire.
 // Tous les appareils qui rejoignent le même CODE partagent le même budget.
 //
 // Principe :
@@ -531,7 +531,7 @@ export async function createFamilySalon() {
   const code = generateFamilyCode();
   saveFamilyMeta({ code, lastSync: null });
   emitStatus();
-  toast(`Salon famille créé : ${code} — partage ce code à ta femme`, { type: 'success', duration: 6000 });
+  toast(`Salon famille créé : ${code} — partage ce code à ton/ta partenaire`, { type: 'success', duration: 6000 });
   // push initial vide/chiffré
   try { await pushToFamily(); } catch (e) { console.warn('[family] push initial échoué', e); }
   return code;
