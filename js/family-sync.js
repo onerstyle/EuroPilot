@@ -16,9 +16,10 @@
 //  - Résolution de conflit : last-write-wins via updatedAt (ISO).
 //  - Auto-sync : debounce 2s après chaque mutation si activé et salon rejoint.
 //
-// Backend par défaut : https://kvdb.io — KV gratuit sans clé, CORS OK,
-// bucket = CODE, clé = europilot-v1. Le contenu est chiffré côté client,
+// Backend par défaut : https://api.jsonstorage.net — JSON gratuit, CORS, sans clé,
+// bucket = europilot, clé = CODE. Le contenu est chiffré côté client,
 // le serveur ne voit que du base64. Surchargeable pour Supabase/Firebase.
+// Ancien kvdb.io conservé en fallback (bucket fixe + code = clé).
 // ============================================================
 
 import { store } from './store.js';
@@ -27,7 +28,7 @@ import { toast } from './ui.js';
 // ---------- Config ----------
 import { FAMILY_SYNC_ENDPOINT, FAMILY_SYNC_KEY } from './family-sync-config.js';
 
-const DEFAULT_ENDPOINT = (typeof globalThis.__EUROPILOT_FAMILY_ENDPOINT__ === 'string' && globalThis.__EUROPILOT_FAMILY_ENDPOINT__.trim()) || (typeof FAMILY_SYNC_ENDPOINT === 'string' && FAMILY_SYNC_ENDPOINT.trim()) || 'https://kvdb.io';
+const DEFAULT_ENDPOINT = (typeof globalThis.__EUROPILOT_FAMILY_ENDPOINT__ === 'string' && globalThis.__EUROPILOT_FAMILY_ENDPOINT__.trim()) || (typeof FAMILY_SYNC_ENDPOINT === 'string' && FAMILY_SYNC_ENDPOINT.trim()) || 'https://api.jsonstorage.net/v1/json/europilot';
 const STORAGE_KEY = 'europilot.family.v1'; // { code, lastSync, autoSync }
 const META_KEY = 'europilot.family.meta.v1'; // { lastUpdatedAt }
 
@@ -138,7 +139,7 @@ function emitStatus() { statusListeners.forEach(fn => fn(getFamilyStatus())); }
 export function onFamilyStatus(fn) { statusListeners.add(fn); return () => statusListeners.delete(fn); }
 function setSyncing(v) { isSyncing = v; emitStatus(); }
 
-// ---------- Backend (kvdb.io par défaut) ----------
+// ---------- Backend ----------
 function getEndpoint() {
   const fromGlobal = typeof globalThis.__EUROPILOT_FAMILY_ENDPOINT__ === 'string' ? globalThis.__EUROPILOT_FAMILY_ENDPOINT__.trim() : '';
   if (fromGlobal) return fromGlobal;
@@ -147,28 +148,97 @@ function getEndpoint() {
 }
 function familyUrl(code) {
   const c = formatCode(code);
-  // kvdb.io : https://kvdb.io/<bucket>/<key>
-  // on utilise le code comme bucket, clé = FAMILY_SYNC_KEY
   const base = getEndpoint().replace(/\/+$/, '');
-  // si endpoint contient déjà un bucket (ex: https://kvdb.io), on ajoute code
-  // si endpoint est vide (mode hors ligne), on retourne null
   if (!base) return null;
-  // Pour kvdb.io, le bucket est la 1re partie après le domaine
-  // Pour un endpoint custom (Supabase), on ajoute ?code=...
-  if (base.includes('kvdb.io')) {
-    return `${base}/${encodeURIComponent(c)}/${encodeURIComponent(FAMILY_SYNC_KEY)}`;
+  if (base.includes('jsonstorage.net')) {
+    // jsonstorage : https://api.jsonstorage.net/v1/json/europilot/EURO-XXXX
+    return `${base}/${encodeURIComponent(c)}`;
   }
-  // générique : ?code=xxx
+  if (base.includes('kvdb.io')) {
+    // kvdb.io : bucket fixe + code comme clé (évite "Bucket is invalid")
+    // Le bucket est créé une fois et stocké en localStorage
+    const bucket = getKvdbBucketSync();
+    return `${base}/${encodeURIComponent(bucket)}/${encodeURIComponent(c)}`;
+  }
   return `${base}/${encodeURIComponent(c)}`;
+}
+// kvdb : bucket fixe stocké localement, créé à la demande
+const KVDB_BUCKET_KEY = 'europilot.kvdb.bucket.v1';
+const KVDB_FIXED_FALLBACK = 'europilot-v1'; // fallback si création échoue (ancien comportement)
+function getKvdbBucketSync() {
+  try {
+    const b = localStorage.getItem(KVDB_BUCKET_KEY);
+    if (b) return b;
+  } catch {}
+  return KVDB_FIXED_FALLBACK;
+}
+async function ensureKvdbBucket() {
+  try {
+    const existing = localStorage.getItem(KVDB_BUCKET_KEY);
+    if (existing) return existing;
+  } catch {}
+  // tente de créer un bucket kvdb (POST https://kvdb.io avec email)
+  try {
+    const res = await fetch('https://kvdb.io', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'email=europilot%40kvdb.io'
+    });
+    if (res.ok) {
+      const bucketId = (await res.text()).trim();
+      if (bucketId && /^[A-Za-z0-9_-]{8,}$/.test(bucketId)) {
+        try { localStorage.setItem(KVDB_BUCKET_KEY, bucketId); } catch {}
+        return bucketId;
+      }
+    }
+  } catch (e) {
+    console.warn('[family] création bucket kvdb échouée', e);
+  }
+  return KVDB_FIXED_FALLBACK;
 }
 
 async function familyFetch(url, opts = {}) {
   const res = await fetch(url, opts);
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
-    throw new Error(`Sync famille ${res.status} — ${txt.slice(0, 200) || res.statusText}`);
+    const body = txt.slice(0, 300);
+    // message plus explicite pour le bug "Bucket is invalid" rencontré
+    if (res.status === 404 && /bucket/i.test(body)) {
+      throw new Error(`Sync famille 404 — Bucket invalide. Le backend actuel (${getEndpoint()}) n'accepte pas le code comme bucket. Le nouveau défaut est https://api.jsonstorage.net/v1/json/europilot (bucket fixe + code comme clé). Vérifie que ton app est à jour (hard refresh) ou passe en partage manuel QR/fichier. Détail: ${body.slice(0,120)}`);
+    }
+    throw new Error(`Sync famille ${res.status} — ${body || res.statusText}`);
   }
   return res;
+}
+// helpers jsonstorage
+async function putJsonStorage(url, b64, updatedAt) {
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: b64, updatedAt })
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
+  }
+  return res;
+}
+async function getJsonStorage(url) {
+  const res = await fetch(url, { method: 'GET' });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    if (res.status === 404 && txt.includes('Item not found')) {
+      throw new Error('Salon vide — fais d’abord « Envoyer » sur un appareil qui a des données');
+    }
+    throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
+  }
+  const j = await res.json().catch(() => null);
+  if (!j || typeof j.data !== 'string') {
+    // ancien format kvdb text/plain stocké dans jsonstorage ?
+    if (typeof j === 'string') return j;
+    throw new Error('Données famille invalides (jsonstorage)');
+  }
+  return j.data;
 }
 
 // ---------- Payload ----------
@@ -235,14 +305,22 @@ export async function pushToFamily() {
     const payload = buildFamilyPayload();
     const jsonStr = JSON.stringify(payload);
     const b64 = await encryptFamilyPayload(jsonStr, code);
-    // kvdb.io attend du texte brut
-    await familyFetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: b64 });
+    const endpoint = getEndpoint();
+    if (endpoint.includes('jsonstorage.net')) {
+      await putJsonStorage(url, b64, payload.updatedAt);
+    } else if (endpoint.includes('kvdb.io')) {
+      // kvdb : s'assure que le bucket existe d'abord
+      await ensureKvdbBucket();
+      const kvUrl = familyUrl(code); // recalculé après création bucket
+      await familyFetch(kvUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: b64 });
+    } else {
+      await familyFetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: b64 });
+    }
     saveFamilyMeta({ lastSync: new Date().toISOString() });
     saveMetaExtra({ lastUpdatedAt: payload.updatedAt });
     emitStatus();
     toast('Données famille envoyées', { type: 'success' });
   } catch (e) {
-    // fallback : propose le partage manuel
     throw new Error(`Envoi famille échoué : ${e.message} — vérifie ta connexion ou utilise le partage par QR / fichier.`);
   } finally { setSyncing(false); }
 }
@@ -253,8 +331,15 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
   if (!url) throw new Error('Aucun backend configuré');
   setSyncing(true);
   try {
-    const res = await familyFetch(url, { method: 'GET' });
-    const b64 = (await res.text()).trim();
+    const endpoint = getEndpoint();
+    let b64 = '';
+    if (endpoint.includes('jsonstorage.net')) {
+      b64 = await getJsonStorage(url);
+    } else {
+      const res = await familyFetch(url, { method: 'GET' });
+      b64 = (await res.text()).trim();
+      if (!b64) throw new Error('Salon vide — fais d’abord « Envoyer » sur un appareil qui a des données');
+    }
     if (!b64) throw new Error('Salon vide — fais d’abord « Envoyer » sur un appareil qui a des données');
     const jsonStr = await decryptFamilyPayload(b64, code);
     const data = JSON.parse(jsonStr);
@@ -286,41 +371,56 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
   if (!code) throw new Error('Aucun salon famille');
   const url = familyUrl(code);
   if (!url) throw new Error('Aucun backend');
+  const endpoint = getEndpoint();
+  const isJsonStorage = endpoint.includes('jsonstorage.net');
+  const isKvdb = endpoint.includes('kvdb.io');
   setSyncing(true);
   try {
-    // récupère distant
     let remote = null;
     let remoteUpdatedAt = null;
     try {
-      const res = await familyFetch(url, { method: 'GET' });
-      const b64 = (await res.text()).trim();
+      let b64 = '';
+      if (isJsonStorage) {
+        b64 = await getJsonStorage(url);
+      } else {
+        if (isKvdb) await ensureKvdbBucket();
+        const u = isKvdb ? familyUrl(code) : url;
+        const res = await familyFetch(u, { method: 'GET' });
+        b64 = (await res.text()).trim();
+      }
       if (b64) {
         const jsonStr = await decryptFamilyPayload(b64, code);
         remote = JSON.parse(jsonStr);
         remoteUpdatedAt = remote.updatedAt || remote.exportedAt;
       }
     } catch (e) {
-      if (!String(e.message).includes('404')) throw e;
-      // pas de distant → on push
+      if (!String(e.message).includes('404') && !String(e.message).includes('Salon vide')) throw e;
     }
     const localUpdatedAt = store.state.updatedAt || loadMetaExtra().lastUpdatedAt;
-    if (!remote) {
+    const doPush = async () => {
       const payload = buildFamilyPayload();
       const b64 = await encryptFamilyPayload(JSON.stringify(payload), code);
-      await familyFetch(url, { method: 'POST', body: b64 });
+      if (isJsonStorage) {
+        await putJsonStorage(url, b64, payload.updatedAt);
+      } else if (isKvdb) {
+        await ensureKvdbBucket();
+        const u = familyUrl(code);
+        await familyFetch(u, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: b64 });
+      } else {
+        await familyFetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: b64 });
+      }
       saveFamilyMeta({ lastSync: new Date().toISOString() });
       saveMetaExtra({ lastUpdatedAt: payload.updatedAt });
       emitStatus();
+      return payload;
+    };
+    if (!remote) {
+      await doPush();
       toast('Première synchro famille créée', { type: 'success' });
       return { action: 'push' };
     }
     if (direction === 'push') {
-      const payload = buildFamilyPayload();
-      const b64 = await encryptFamilyPayload(JSON.stringify(payload), code);
-      await familyFetch(url, { method: 'POST', body: b64 });
-      saveFamilyMeta({ lastSync: new Date().toISOString() });
-      saveMetaExtra({ lastUpdatedAt: payload.updatedAt });
-      emitStatus();
+      await doPush();
       return { action: 'push' };
     }
     if (direction === 'pull') {
@@ -330,7 +430,6 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
       emitStatus();
       return { action: 'pull' };
     }
-    // auto last-write-wins
     const localTime = localUpdatedAt ? new Date(localUpdatedAt).getTime() : 0;
     const remoteTime = remoteUpdatedAt ? new Date(remoteUpdatedAt).getTime() : 0;
     if (Math.abs(localTime - remoteTime) < 5000) {
@@ -344,11 +443,7 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
       }
     }
     if (localTime > remoteTime) {
-      const payload = buildFamilyPayload();
-      const b64 = await encryptFamilyPayload(JSON.stringify(payload), code);
-      await familyFetch(url, { method: 'POST', body: b64 });
-      saveFamilyMeta({ lastSync: new Date().toISOString() });
-      saveMetaExtra({ lastUpdatedAt: payload.updatedAt });
+      await doPush();
       toast('Modifications envoyées', { type: 'success' });
       emitStatus();
       return { action: 'push' };
