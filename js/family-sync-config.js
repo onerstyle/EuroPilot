@@ -1,15 +1,17 @@
 // ============================================================
 // family-sync-config.js — Configuration Sync Famille
 //
-// Backend par défaut : https://kvdb.io (KV gratuit, CORS, bucket fixe).
-// Le CODE famille sert de clé (https://kvdb.io/<bucket fixe>/<CODE>)
+// Backend par défaut : https://keyvalue.immanuel.co (KV gratuit, CORS,
+// sans email, bucket = appKey fyq2n3yb). Le CODE sert de clé
+// (https://keyvalue.immanuel.co/api/KeyVal/<appKey>/<CODE>)
 // et la donnée est chiffrée côté client (AES-GCM dérivée du CODE)
-// donc le serveur ne voit que du base64. L'ancien code utilisait le CODE
-// comme bucket (https://kvdb.io/<CODE>/...) → 404 Bucket is invalid.
-// Le nouveau code utilise un bucket fixe créé à la demande.
+// donc le serveur ne voit que du base64. Données découpées en chunks
+// de 900 chars (limite 1024 de l'API) pour les gros budgets.
 //
-// Alternative : https://api.jsonstorage.net/v1/json/europilot (nécessite
-// PUT vs POST, géré en fallback) — voir js/family-sync.js
+// Anciens défauts :
+// - kvdb.io (bucket fixe) → 403 email not verified (nécessite activation)
+// - api.jsonstorage.net → 404 Item not found au PUT sur salon vide
+// Tous conservés en fallback.
 //
 // Pour utiliser votre propre backend (Supabase, Firebase, Worker...) :
 //  - Remplacez FAMILY_SYNC_ENDPOINT par l'URL de votre endpoint
@@ -22,5 +24,5 @@
 //   globalThis.__EUROPILOT_FAMILY_ENDPOINT__ = "https://votre-worker.workers.dev"
 // ============================================================
 
-export const FAMILY_SYNC_ENDPOINT = "https://kvdb.io";
-export const FAMILY_SYNC_KEY = "europilot-v1";
+export const FAMILY_SYNC_ENDPOINT = "https://keyvalue.immanuel.co/api/KeyVal";
+export const FAMILY_SYNC_KEY = "fyq2n3yb";
