@@ -1,6 +1,6 @@
 // Service worker : met en cache les fichiers de l'application pour un
 // fonctionnement 100 % hors ligne. Aucune donnée n'est envoyée à un serveur.
-const CACHE = 'europilot-v9-supabase';
+const CACHE = 'europilot-v10-worker';
 const FILES = [
   './', './index.html', './app.html', './css/style.css', './manifest.webmanifest',
   './assets/icon.svg',

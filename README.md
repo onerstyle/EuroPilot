@@ -31,7 +31,7 @@ EuroPilot est une application web **open source** de gestion financière personn
 | Module | Détails |
 |---|---|
 | **Tableau de bord** | Solde actuel, revenus/dépenses du mois, reste à vivre, moyenne quotidienne, revenus/dépenses de l'année, évolution vs mois précédent, graphiques revenus/dépenses et par catégorie, principales catégories, budgets du mois, dernières opérations. |
-| **Famille** | Synchronisation **optionnelle et ultra simple** par code partagé `EURO-XXXX` : un code sert d'ID de salon + clé de chiffrement (AES-GCM 256, PBKDF2 120k). Données chiffrées côté téléphone avant envoi, aucun compte Google, aucun Client ID. Backend léger (`kvdb.io` par défaut, remplaçable ou désactivable, partage manuel par QR/lien/fichier en secours). Résolution *last-write-wins* via `updatedAt`, auto-sync 2s après modif. |
+| **Famille** | Synchronisation **optionnelle et ultra simple** par code `EURO-XXXX` : ID de salon + clé AES-GCM 256 (PBKDF2 120k). Données chiffrées côté téléphone, aucun compte Google. Backend au choix : **Worker Cloudflare 1-clic** (`worker/worker.js`, gratuit, voir `WORKER_SETUP.md`) ou **Supabase** (`SUPABASE_SETUP.md`) — ancien `kvdb.io` remplacé (403/500). Fallback QR/lien/fichier hors ligne, *last-write-wins* sur `updatedAt`, auto-sync 2 s. |
 | **Transactions** | Ajout rapide (date, montant, type, catégorie, sous-catégorie, description, moyen de paiement, compte, récurrence, note). Recherche instantanée et filtres : période, année, mois, dates personnalisées, type, catégorie, compte, moyen de paiement, montant min/max. Suivi mensuel avec dépenses par catégorie et comparaison avec les mois précédents. Export CSV/JSON de la sélection. |
 | **Calendrier** | Vue mensuelle avec total quotidien, carte de chaleur des dépenses, détail des opérations du jour sélectionné, ajout direct à une date. |
 | **Budgets** | Budget mensuel par catégorie : *Budget / Dépensé / Reste*, barre de progression, alertes visuelles à 80 % et au dépassement, reste par jour. |
@@ -156,7 +156,7 @@ EuroPilot reste **100 % local par défaut**. La synchronisation Famille est **10
 
 - Un **code court** `EURO-XXXX` (4 lettres A-Z, ex: `EURO-8K2P`) est l'**ID du salon** + la **clé de chiffrement**. Le créateur le partage à sa famille (copier, lien, QR code) ; chaque membre le saisit une fois → même salon, même budget.
 - **Chiffrement de bout en bout côté téléphone** : AES-GCM 256, clé dérivée du code par PBKDF2 (120 000 itérations, sel aléatoire 16 octets, IV 12 octets). Le serveur ne stocke que du `base64` illisible sans le code.
-- **Backend léger par défaut** : `https://kvdb.io` (KV gratuit, CORS OK, sans clé). Remplaçable par votre propre endpoint (Supabase, Firebase, Cloudflare Worker…) via `js/family-sync-config.js` ou `globalThis.__EUROPILOT_FAMILY_ENDPOINT__`. Mettre l'endpoint à `""` désactive le cloud et n'utilise que le partage manuel.
+- **Backend au choix (1-clic)** : **Worker Cloudflare** (recommandé, gratuit, `WORKER_SETUP.md` : copie `worker/worker.js` → JS → `https://xxx.workers.dev`, persistance KV/D1 optionnelle) ou **Supabase** (`SUPABASE_SETUP.md`). Anciens `kvdb.io`/`keyvalue` conservés en fallback. Config live sans rebuild : `F12` → `localStorage.setItem('europilot.family.endpoint','https://xxx.workers.dev')` + `location.reload()` — ou éditer `js/family-sync-config.js` / `globalThis.__EUROPILOT_FAMILY_ENDPOINT__`. Mettre à `""` désactive le cloud (QR/fichier uniquement).
 - **Résolution de conflit** : *last-write-wins* sur `updatedAt` (seuil 5 s). Pas de merge ligne-à-ligne : tout le fichier est remplacé.
 - **Hors ligne** : l'app fonctionne sans réseau ; la synchro sera retentée à la reconnexion. Un **partage manuel de secours** (QR / lien / fichier chiffré) reste disponible même sans backend.
 
@@ -167,7 +167,7 @@ EuroPilot reste **100 % local par défaut**. La synchronisation Famille est **10
 3. Sur son téléphone : **Paramètres → Famille → Rejoindre un salon** → coller le code → **Synchroniser maintenant**.
 4. C'est tout — utilisez le **même code sur tous les appareils** qui doivent partager le même budget. L'auto-sync s'occupe du reste.
 
-> Astuce build : pour héberger votre propre backend, éditez `js/family-sync-config.js` (`FAMILY_SYNC_ENDPOINT = "https://votre-worker.workers.dev"`) et `FAMILY_SYNC_KEY`. Vous pouvez aussi injecter `globalThis.__EUROPILOT_FAMILY_ENDPOINT__` avant `js/main.js` pour surcharger sans toucher au fichier.
+> Backend : **Worker 1-clic** (`WORKER_SETUP.md`) : crée un Worker → colle `worker/worker.js` → `https://xxx.workers.dev` → dans EuroPilot `F12` : `localStorage.setItem('europilot.family.endpoint','https://xxx.workers.dev');location.reload()`. **Supabase** : `SUPABASE_SETUP.md`. En dur : `js/family-sync-config.js` (`FAMILY_SYNC_ENDPOINT = "https://xxx.workers.dev"`). Surcharge volatile : `globalThis.__EUROPILOT_FAMILY_ENDPOINT__`.
 
 ### Utilisation
 
@@ -189,7 +189,7 @@ Un **point coloré** dans l'en-tête indique l'état Famille : `🟢 salon actif
 ### Sécurité & vie privée
 
 - Le **code n'est jamais envoyé en clair comme clé** : seule la donnée chiffrée (`iv:salt:ciphertext` en base64) transite. Sans le code, le contenu est indéchiffrable.
-- Le backend par défaut (`kvdb.io`) n'a **aucune authentification** autre que la connaissance du code : choisissez un code non devinable et ne le publiez pas publiquement. Pour plus de contrôle, déployez votre propre Worker avec authentification.
+- Le backend (Worker/Supabase/`kvdb.io`) n'a **aucune authentification** autre que la connaissance du code : choisissez un code non devinable et ne le publiez pas publiquement. Pour plus de contrôle, déployez votre propre Worker avec authentification.
 - La **taille** est limitée (~1 Mo) : suffisant pour des milliers de transactions ; au-delà, utilisez la sauvegarde JSON manuelle.
 - Vous pouvez à tout moment **exporter une sauvegarde non chiffrée** (`Paramètres → Sauvegarde complète`) et l'archiver.
 

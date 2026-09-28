@@ -1,0 +1,30 @@
+name = "europilot-family"
+main = "worker.js"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# --- Déploie sans binding (mode mémoire volatile, OK pour tester) ---
+# Laisse ce fichier tel quel → `npx wrangler deploy` marche direct, mais les données
+# ne persistent pas entre redémarrages isolés. Pour persister 100%, décommente une des 2 options ci-dessous.
+
+# Option A — KV (recommandé, le plus simple, gratuit)
+# 1) npx wrangler kv namespace create FAMILY
+# 2) copie l'id affiché et remplace ci-dessous (2 lignes)
+# 3) npx wrangler deploy
+# [[kv_namespaces]]
+# binding = "FAMILY"
+# id = "REPLACE_WITH_KV_ID"
+# preview_id = "REPLACE_WITH_KV_PREVIEW_ID"
+
+# Option B — D1 (SQLite, persistant aussi)
+# 1) npx wrangler d1 create europilot-family
+# 2) copie l'id et remplace ci-dessous
+# 3) npx wrangler deploy
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "europilot-family"
+# database_id = "REPLACE_WITH_D1_ID"
+
+# Observabilité (optionnel)
+# [observability]
+# enabled = true

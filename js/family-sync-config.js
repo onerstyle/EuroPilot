@@ -1,7 +1,7 @@
 // ============================================================
 // family-sync-config.js — Configuration Sync Famille
 //
-// Backend par défaut : Supabase (REST gratuit, CORS, sans préflight bloquant)
+// Backend par défaut : Supabase (REST gratuit, CORS) — alternative 1-clic : Worker Cloudflare (voir WORKER_SETUP.md)
 // Table : family(code text PK, data text, updated_at timestamptz)
 // RLS : policy "Allow all" (for all using true) — données chiffrées
 //       côté client (AES-GCM dérivée du CODE) donc le serveur ne voit que du base64.
@@ -16,8 +16,9 @@
 //  2. SQL Editor → crée la table family (voir guide)
 //  3. Project Settings → API → copie Project URL + anon key ici
 //
-// Pour utiliser votre propre backend (Worker, Firebase, etc.) :
-//  - Option live (console) : localStorage.setItem('europilot.family.endpoint','https://xxx.supabase.co/rest/v1/family') + localStorage.setItem('europilot.family.key','eyJ...')
+// Pour utiliser votre propre backend :
+//  - Worker 1-clic (recommandé) : WORKER_SETUP.md → https://xxx.workers.dev puis F12 : localStorage.setItem('europilot.family.endpoint','https://xxx.workers.dev');location.reload()
+//  - Supabase live (console) : localStorage.setItem('europilot.family.endpoint','https://xxx.supabase.co/rest/v1/family') + localStorage.setItem('europilot.family.key','eyJ...')
 //  - Remplacez FAMILY_SYNC_ENDPOINT / FAMILY_SYNC_KEY
 //  - Laissez vide ("") pour désactiver le cloud et n'utiliser que le
 //    partage manuel (QR / lien / fichier) — utile en mode hors ligne.
