@@ -59,7 +59,7 @@ export function render(root, { navigate }) {
         <span class="badge ${fam.hasCode ? 'ok' : ''}" id="family-badge">${fam.syncing ? 'Synchro…' : fam.hasCode ? fam.formattedCode : 'Non configuré'}</span>
       </div>
       <p class="muted small">
-        Centralisez vos données pour les alimenter à plusieurs — <b>sans compte Google, sans Client ID</b>.<br>
+        Centralisez vos données pour les alimenter à plusieurs.<br>
         Crée un <b>salon</b> avec un code à 4 lettres (ex: <code>EURO-8K2P</code>) et partagez-le à votre partenaire : vous alimentez le <b>même budget</b> en temps réel. Données <b>chiffrées côté téléphone</b> (AES-GCM, le code est la clé) — le serveur ne voit que du base64.
       </p>
 
