@@ -1,10 +1,14 @@
 // ============================================================
 // store.js — État de l'application et persistance locale (localStorage)
 //
-// Toutes les données restent sur l'appareil de l'utilisateur.
-// Rien n'est jamais envoyé vers un serveur.
+// Par défaut toutes les données restent sur l'appareil de l'utilisateur
+// (localStorage). La synchronisation Google Drive est optionnelle,
+// chiffrée côté transport (HTTPS) et stockée dans le Drive personnel
+// de l'utilisateur (appDataFolder, invisible dans My Drive).
 //
 // Structure des données :
+//   version      : number (schéma)
+//   updatedAt    : ISO string — dernière mutation (pour conflit Drive)
 //   transactions : [{ id, date, amount, type, categoryId, sub, description,
 //                     paymentId, accountId, recurringId, note }]
 //   categories   : [{ id, name, icon, color, type, subs[] }]
@@ -14,7 +18,8 @@
 //   recurring    : [{ id, label, amount, type, categoryId, sub, paymentId,
 //                    accountId, frequency, interval, startDate, endDate,
 //                    nextDate, active }]
-//   settings     : { theme, ... }
+//   settings     : { theme, defaultAccount, defaultPayment, onboarded, ...,
+//                    drive: { clientId, autoSync, lastSync, fileId } }
 // ============================================================
 
 import { DEFAULT_ACCOUNTS, DEFAULT_CATEGORIES, DEFAULT_PAYMENT_METHODS } from './defaults.js';
@@ -27,32 +32,47 @@ const undoStack = []; // pile d'annulation (max 20 actions)
 /** État initial vide */
 const emptyState = () => ({
   version: 1,
+  updatedAt: null,
   transactions: [],
   categories: structuredClone(DEFAULT_CATEGORIES),
   accounts: structuredClone(DEFAULT_ACCOUNTS),
   payments: structuredClone(DEFAULT_PAYMENT_METHODS),
   budgets: {},
   recurring: [],
-  settings: { theme: 'auto', defaultAccount: 'courant', defaultPayment: 'cb', onboarded: false, demoLoaded: false },
+  settings: {
+    theme: 'auto',
+    defaultAccount: 'courant',
+    defaultPayment: 'cb',
+    onboarded: false,
+    demoLoaded: false,
+    drive: { clientId: '', autoSync: false, lastSync: null, fileId: null },
+  },
 });
 
 let state = load();
 
-/** Charge depuis localStorage (ou état vide) */
+/** Charge depuis localStorage (ou état vide) — avec migration drive */
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return emptyState();
     const parsed = JSON.parse(raw);
-    return { ...emptyState(), ...parsed, settings: { ...emptyState().settings, ...(parsed.settings || {}) } };
+    const base = emptyState();
+    // migration douce : conserve drive même si absent de la sauvegarde
+    const mergedSettings = { ...base.settings, ...(parsed.settings || {}), drive: { ...base.settings.drive, ...(parsed.settings?.drive || {}) } };
+    // migrated updatedAt: si absent, on prend la date de la sauvegarde ou maintenant
+    const merged = { ...base, ...parsed, settings: mergedSettings };
+    if (!merged.updatedAt && parsed.transactions?.length) merged.updatedAt = new Date().toISOString();
+    return merged;
   } catch (e) {
     console.error('Impossible de lire les données locales', e);
     return emptyState();
   }
 }
 
-/** Sauvegarde et notifie les vues */
-function save() {
+/** Sauvegarde et notifie les vues — met à jour updatedAt */
+function save({ touch = true } = {}) {
+  if (touch) state.updatedAt = new Date().toISOString();
   localStorage.setItem(KEY, JSON.stringify(state));
   listeners.forEach((fn) => fn(state));
 }
@@ -183,26 +203,59 @@ export const store = {
     const r = state.recurring.find((x) => x.id === id);
     if (r) Object.assign(r, patch);
   },
-  commitSilently() { save(); },
+  commitSilently() { save({ touch: true }); },
 
   // ----- Paramètres -----
-  setSetting(k, v) { state.settings[k] = v; save(); },
+  setSetting(k, v) {
+    // supporte setSetting('drive', {...}) mais aussi setSetting('theme', 'dark')
+    state.settings[k] = v;
+    save();
+  },
+  /** Mise à jour partielle de settings.drive sans écraser les autres clés */
+  setDriveSettings(patch) {
+    state.settings.drive = { ...(state.settings.drive || {}), ...patch };
+    save();
+  },
 
   // ----- Sauvegarde / restauration -----
   exportAll() { return structuredClone(state); },
   importAll(data) {
     pushUndo('Restauration de sauvegarde', structuredClone(state));
     if (!data || !Array.isArray(data.transactions)) throw new Error('Fichier de sauvegarde invalide');
-    state = { ...emptyState(), ...data, settings: { ...emptyState().settings, ...(data.settings || {}) } };
+    const base = emptyState();
+    state = {
+      ...base,
+      ...data,
+      updatedAt: data.updatedAt || new Date().toISOString(),
+      settings: { ...base.settings, ...(data.settings || {}), drive: { ...base.settings.drive, ...(data.settings?.drive || {}) } },
+    };
     state.transactions = state.transactions.map(normalizeTx);
+    save();
+  },
+  /** Remplacement sans undo (utilisé par la sync Drive quand on a confirmé) */
+  replaceAll(data) {
+    if (!data || !Array.isArray(data.transactions)) throw new Error('Fichier de sauvegarde invalide');
+    const base = emptyState();
+    state = {
+      ...base,
+      ...data,
+      updatedAt: data.updatedAt || new Date().toISOString(),
+      settings: { ...base.settings, ...(data.settings || {}), drive: { ...base.settings.drive, ...(data.settings?.drive || {}) } },
+    };
+    state.transactions = state.transactions.map(normalizeTx);
+    // on conserve le drive fileId local
     save();
   },
   /** Suppression définitive de toutes les données */
   wipe() {
     undoStack.length = 0;
+    const prevDrive = state.settings.drive;
     state = emptyState();
     state.settings.onboarded = true;
+    // on conserve le Client ID Drive pour éviter de le ressaisir, mais on réinitialise le reste
+    state.settings.drive = { ...state.settings.drive, clientId: prevDrive?.clientId || '' };
     localStorage.removeItem(KEY);
+    try { localStorage.removeItem('europilot.drive.token.v1'); localStorage.removeItem('europilot.drive.meta.v1'); } catch {}
     save();
   },
 

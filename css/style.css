@@ -280,6 +280,26 @@ label.check { flex-direction: row; align-items: center; gap: .5rem; font-size: .
 .danger-zone { border-color: var(--red-soft); }
 .danger-zone h2 { color: var(--red); }
 
+/* ---------- Google Drive Sync ---------- */
+#drive-card { border-color: color-mix(in srgb, var(--accent) 18%, var(--border)); }
+.drive-grid { margin: .75rem 0; display: flex; flex-direction: column; gap: .6rem; }
+.drive-client-row { display: flex; gap: .5rem; align-items: stretch; margin-top: .35rem; }
+.drive-client-row input { flex: 1; font-family: var(--mono); font-size: .85rem; }
+.drive-client-row .btn { white-space: nowrap; }
+.drive-help { background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius-s); padding: .6rem .75rem; }
+.drive-help summary { cursor: pointer; font-weight: 600; }
+.drive-help a { word-break: break-all; }
+.drive-status { background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius-s); padding: .7rem .85rem; margin-top: .5rem; }
+.drive-status-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; }
+.drive-status-grid b { font-variant-numeric: tabular-nums; word-break: break-all; font-size: .9rem; }
+.drive-status-grid code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: bottom; }
+#drive-badge { font-size: .72rem; }
+#drive-dot { transition: background .2s, box-shadow .2s; }
+@media (max-width: 760px) {
+  .drive-status-grid { grid-template-columns: 1fr; gap: .4rem; }
+  .drive-client-row { flex-direction: column; }
+}
+
 /* ---------- Bienvenue ---------- */
 .welcome { margin: 1.5rem 1.5rem 0; padding: 1.25rem 1.5rem; border-radius: var(--radius); background: linear-gradient(135deg, var(--accent), #7c3aed); color: #fff; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; max-width: 1230px; align-self: center; width: calc(100% - 3rem); }
 .welcome h2 { color: #fff; } .welcome p { margin: 0; opacity: .9; max-width: 560px; }

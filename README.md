@@ -17,11 +17,12 @@ EuroPilot est une application web **open source** de gestion financière personn
 2. [Installation et lancement local](#installation-et-lancement-local)
 3. [Déploiement sur GitHub Pages](#déploiement-sur-github-pages)
 4. [Application Android (APK) avec Capacitor](#application-android-apk-avec-capacitor)
-5. [Fonctionnement](#fonctionnement)
-6. [Architecture du code](#architecture-du-code)
-7. [Sauvegarde des données](#sauvegarde-des-données)
-8. [Contribuer](#contribuer)
-9. [Licence](#licence)
+5. [Synchronisation Google Drive](#synchronisation-google-drive)
+6. [Fonctionnement](#fonctionnement)
+7. [Architecture du code](#architecture-du-code)
+8. [Sauvegarde des données](#sauvegarde-des-données)
+9. [Contribuer](#contribuer)
+10. [Licence](#licence)
 
 ---
 
@@ -30,6 +31,7 @@ EuroPilot est une application web **open source** de gestion financière personn
 | Module | Détails |
 |---|---|
 | **Tableau de bord** | Solde actuel, revenus/dépenses du mois, reste à vivre, moyenne quotidienne, revenus/dépenses de l'année, évolution vs mois précédent, graphiques revenus/dépenses et par catégorie, principales catégories, budgets du mois, dernières opérations. |
+| **Drive Sync** | Synchronisation **optionnelle** sur votre propre Google Drive (`appDataFolder` invisible) : sauvegarde complète chiffrée en transit (HTTPS), synchro manuelle ou auto (2–3 s après modif), conflit *last-write-wins* via `updatedAt`. Aucune donnée sur un serveur EuroPilot. |
 | **Transactions** | Ajout rapide (date, montant, type, catégorie, sous-catégorie, description, moyen de paiement, compte, récurrence, note). Recherche instantanée et filtres : période, année, mois, dates personnalisées, type, catégorie, compte, moyen de paiement, montant min/max. Suivi mensuel avec dépenses par catégorie et comparaison avec les mois précédents. Export CSV/JSON de la sélection. |
 | **Calendrier** | Vue mensuelle avec total quotidien, carte de chaleur des dépenses, détail des opérations du jour sélectionné, ajout direct à une date. |
 | **Budgets** | Budget mensuel par catégorie : *Budget / Dépensé / Reste*, barre de progression, alertes visuelles à 80 % et au dépassement, reste par jour. |
@@ -146,6 +148,61 @@ Points d'attention :
 
 ---
 
+## Synchronisation Google Drive
+
+EuroPilot reste **100 % local par défaut**. La synchronisation Drive est **100 % optionnelle** et n'utilise **que votre propre Google Drive** — aucun serveur EuroPilot n'intervient.
+
+### Principe
+
+- Une sauvegarde complète (`europilot-backup.json` — transactions, catégories, comptes, budgets, récurrences, paramètres) est stockée dans le dossier caché **`appDataFolder`** de votre Drive (invisible dans « Mon Drive », isolé par application, comme WhatsApp).
+- **Chiffrement transport** : HTTPS (TLS) entre le navigateur et Google. Google stocke le fichier comme tout autre fichier Drive (chiffré au repos côté Google).
+- **Résolution de conflit** : *last-write-wins* — comparaison de `updatedAt` (ISO) local vs distant, avec seuil 5 s. La version la plus récente gagne ; l'autre est écrasée (annulable via ↶ côté local).
+- **Hors ligne** : l'app fonctionne sans réseau ; la synchro sera retentée à la prochaine connexion.
+
+### Configuration (5 min, une seule fois)
+
+1. **Google Cloud Console** → [console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials)
+2. « **Créer des identifiants** » → **ID client OAuth** → Type **Application Web**
+3. Dans **Origines JavaScript autorisées**, ajoutez :
+   - `https://onerstyle.github.io` (pour GitHub Pages)
+   - `http://localhost:8080` (pour le dev local, adaptez le port)
+   - `capacitor://localhost` et `http://localhost` si vous testez l'APK en WebView
+4. **Bibliothèque** → activez **Google Drive API**
+5. Copiez le **Client ID** (`…apps.googleusercontent.com`) → collez-le dans **EuroPilot → Paramètres → ☁️ Synchronisation Google Drive → Client ID → Enregistrer**
+
+> Astuce build : vous pouvez aussi injecter `globalThis.__EUROPILOT_DRIVE_CLIENT_ID__ = "…apps.googleusercontent.com"` avant `js/main.js` (ou via `vite.define`) pour pré-remplir le Client ID sans le stocker dans `localStorage`.
+
+### Utilisation
+
+Dans **Paramètres → ☁️ Synchronisation Google Drive** :
+
+| Action | Effet |
+|---|---|
+| **🔗 Se connecter** | Ouvre le consentement Google (scopes `drive.appdata` + `drive.file`) et mémorise un `access_token` court (mémoire + `localStorage`, révocable). |
+| **🔄 Synchroniser maintenant** | Compare `updatedAt` local vs Drive : pousse si vous êtes plus récent, tire si Drive est plus récent, ne fait rien si identique. |
+| **⬆ Envoyer vers Drive** | Force un *push* (écrase Drive avec vos données locales). |
+| **⬇ Restaurer depuis Drive** | Force un *pull* (écrase le local avec Drive, avec confirmation). |
+| **Synchronisation automatique** | Si cochée et connecté, envoie la sauvegarde 2–3 s après chaque modification (debounce). |
+| **🚪 Se déconnecter** | Révoque localement le token ; le fichier reste sur votre Drive. |
+
+Un **point coloré** dans l'en-tête indique l'état Drive : `🟢 connecté`, `🟡 configuré non connecté`, `🔵 synchronisation…`.
+
+### Scopes & sécurité
+
+- `https://www.googleapis.com/auth/drive.appdata` — accès **uniquement** au dossier caché de l'app (recommandé, minimal).
+- `https://www.googleapis.com/auth/drive.file` — fallback pour retrouver le fichier s'il a été créé hors `appDataFolder` (compatibilité ascendante).
+- Aucun scope `drive.readonly` large : EuroPilot **ne peut pas lire** vos autres fichiers Drive.
+- Le `access_token` est stocké en clair dans `localStorage` (`europilot.drive.token.v1`) avec son expiration ; il est **révocable** depuis [myaccount.google.com/permissions](https://myaccount.google.com/permissions). Aucun `refresh_token` n'est stocké (re-consentement à l'expiration).
+- Le contenu est le même JSON que la sauvegarde complète ; vous pouvez l'exporter/importer manuellement à tout moment.
+
+### Limites connues
+
+- Pas de chiffrement de bout en bout côté client (le JSON sur Drive est lisible par Google et par quiconque a accès à votre Drive). Pour une confidentialité maximale, gardez la synchro désactivée et exportez des sauvegardes chiffrées manuellement.
+- Pas de fusion ligne-à-ligne : tout le fichier est remplacé (pas de CRDT).
+- L'APK Android utilise le même flux GIS ; sur certains WebView anciens, le popup OAuth peut être bloqué — utilisez alors Chrome Custom Tabs ou le navigateur système.
+
+---
+
 ## Fonctionnement
 
 ### Première utilisation
@@ -179,7 +236,8 @@ EuroPilot/
 ├── assets/icon.svg
 ├── js/
 │   ├── main.js               # Point d'entrée : routeur (#/vue), navigation, thème, raccourcis
-│   ├── store.js              # État + persistance localStorage, pile d'annulation, calculs (totaux, soldes…)
+│   ├── store.js              # État + persistance localStorage, pile d'annulation, calculs (totaux, soldes…) + updatedAt / drive
+│   ├── drive.js              # Synchronisation Google Drive (GIS + Drive API v3, appDataFolder, auto-sync)
 │   ├── defaults.js           # Catégories, comptes, moyens de paiement et fréquences par défaut
 │   ├── utils.js              # Formats FR (euros, dates), utilitaires dates/DOM
 │   ├── ui.js                 # Modales, toasts, confirmations, formulaire de transaction, lignes de liste
@@ -195,7 +253,7 @@ EuroPilot/
 │       ├── stats.js
 │       ├── accounts.js
 │       ├── years.js
-│       └── settings.js
+│       └── settings.js       # Paramètres + panneau ☁️ Drive
 ├── .github/workflows/deploy.yml  # Déploiement GitHub Pages
 ├── .github/workflows/android.yml # Construction de l'APK Android (artifact)
 ├── capacitor.config.json         # Configuration Capacitor (appId, webDir, splash)
@@ -214,13 +272,15 @@ EuroPilot/
 ### Modèle de données
 ```js
 {
+  version: 1,
+  updatedAt: '2026-09-28T12:00:00.000Z', // pour conflit Drive (last-write-wins)
   transactions: [{ id, date: 'AAAA-MM-JJ', amount, type: 'expense'|'income', categoryId, sub, description, paymentId, accountId, recurringId, note }],
   categories:   [{ id, name, icon, color, type, subs: [] }],
   accounts:     [{ id, name, icon, color, initialBalance }],
   payments:     [{ id, name, icon }],
   budgets:      { [categoryId]: montantMensuel },
   recurring:    [{ id, label, amount, type, categoryId, paymentId, accountId, frequency, interval, startDate, endDate, nextDate, active }],
-  settings:     { theme, defaultAccount, defaultPayment, onboarded }
+  settings:     { theme, defaultAccount, defaultPayment, onboarded, drive: { clientId, autoSync, lastSync, fileId } }
 }
 ```
 

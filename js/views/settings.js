@@ -1,6 +1,6 @@
 // ============================================================
 // views/settings.js — Paramètres : thème, catégories, moyens de paiement,
-// import/export, sauvegarde, suppression des données
+// import/export, sauvegarde, suppression des données + Google Drive
 // ============================================================
 
 import { store } from '../store.js';
@@ -8,10 +8,15 @@ import { $, $$, esc, fmtEuro } from '../utils.js';
 import { openModal, closeModal, confirm, toast, toastUndo, optionList } from '../ui.js';
 import { exportCSV, exportJSON, exportBackup, importCSV, importJSON, readFile } from '../io.js';
 import { applyTheme } from '../main.js';
+import {
+  getDriveStatus, onDriveStatus, signIn, signOut, pushToDrive, pullFromDrive, syncNow,
+  setAutoSync, setClientId, formatLastSync
+} from '../drive.js';
 
 export function render(root, { navigate }) {
   const { state } = store;
   const size = new Blob([JSON.stringify(state)]).size;
+  const drive = getDriveStatus();
 
   root.innerHTML = `
     <div class="page-head"><div><h1>Paramètres</h1><p class="muted">Personnalisation, données et confidentialité</p></div></div>
@@ -47,6 +52,62 @@ export function render(root, { navigate }) {
       </div>
     </div>
 
+    <!-- Google Drive Sync -->
+    <div class="card" id="drive-card">
+      <div class="card-head">
+        <h2>☁️ Synchronisation Google Drive</h2>
+        <span class="badge ${drive.signedIn ? 'ok' : drive.configured ? 'warn' : ''}" id="drive-badge">${drive.syncing ? 'Synchronisation…' : drive.signedIn ? 'Connecté' : drive.configured ? 'Non connecté' : 'Non configuré'}</span>
+      </div>
+      <p class="muted small">
+        Stockez une copie chiffrée (HTTPS) de vos données dans <b>votre propre Google Drive</b> (dossier caché <code>appDataFolder</code>, invisible dans « Mon Drive »). Idéal pour synchroniser entre appareils sans serveur tiers.
+        Aucune donnée n'est envoyée à EuroPilot — seul votre Drive est utilisé.
+      </p>
+
+      <div class="drive-grid">
+        <label>Client ID OAuth 2.0 Google <small class="muted">(type « Application Web »)</small>
+          <div class="drive-client-row">
+            <input id="drive-client-id" placeholder="1234567890-abc.apps.googleusercontent.com" value="${esc(drive.clientId || '')}" spellcheck="false" autocomplete="off">
+            <button class="btn btn-ghost" id="drive-save-id">Enregistrer</button>
+          </div>
+        </label>
+        <details class="drive-help">
+          <summary class="muted small">Comment obtenir un Client ID ?</summary>
+          <ol class="muted small" style="margin:.5rem 0 0 1.2rem; line-height:1.5">
+            <li>Allez sur <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → Identifiants</a></li>
+            <li>« Créer des identifiants » → <b>ID client OAuth</b> → Type <b>Application Web</b></li>
+            <li>Ajoutez en <b>Origines JavaScript autorisées</b> : <code>${esc(location.origin)}</code></li>
+            <li>Activez l'API <code>Google Drive API</code> dans « API et services → Bibliothèque »</li>
+            <li>Copiez le <b>Client ID</b> et collez-le ci-dessus, puis « Enregistrer »</li>
+          </ol>
+          <p class="muted small" style="margin-top:.6rem">💡 Sans Client ID, les boutons Drive restent désactivés. Vous pouvez aussi définir <code>__EUROPILOT_DRIVE_CLIENT_ID__</code> au build.</p>
+        </details>
+      </div>
+
+      <div class="drive-status">
+        <div class="drive-status-grid">
+          <div><span class="muted small">État</span><br><b id="drive-status-text">${drive.signedIn ? '🟢 Connecté' : drive.configured ? '🟡 En attente de connexion' : '⚪ Non configuré'}</b></div>
+          <div><span class="muted small">Dernière synchro</span><br><b id="drive-last-sync">${esc(formatLastSync(drive.lastSync))}</b></div>
+          <div><span class="muted small">Fichier Drive</span><br><code class="small" id="drive-file-id">${drive.fileId ? esc(drive.fileId.slice(0, 12) + '…') : '—'}</code></div>
+        </div>
+      </div>
+
+      <div class="btn-row wrap" style="margin-top:.9rem">
+        <button class="btn btn-primary" id="drive-connect" ${drive.configured && !drive.signedIn ? '' : 'disabled'}>🔗 Se connecter</button>
+        <button class="btn btn-ghost" id="drive-sync" ${drive.signedIn ? '' : 'disabled'}>${drive.syncing ? '⏳ Synchronisation…' : '🔄 Synchroniser maintenant'}</button>
+        <button class="btn btn-ghost" id="drive-push" ${drive.signedIn ? '' : 'disabled'}>⬆ Envoyer vers Drive</button>
+        <button class="btn btn-ghost" id="drive-pull" ${drive.signedIn ? '' : 'disabled'}>⬇ Restaurer depuis Drive</button>
+        <button class="btn btn-ghost" id="drive-disconnect" ${drive.signedIn ? '' : 'disabled'}>🚪 Se déconnecter</button>
+      </div>
+
+      <label class="check" style="margin-top:.9rem">
+        <input type="checkbox" id="drive-auto" ${drive.autoSync ? 'checked' : ''} ${drive.signedIn ? '' : 'disabled'}>
+        Synchronisation automatique <small class="muted">— envoie la sauvegarde 2–3 s après chaque modification (si connecté)</small>
+      </label>
+      <p class="muted small" id="drive-hint" style="margin-top:.5rem">
+        ${!drive.configured ? '⚠️ Renseignez d’abord votre Client ID Google.' : !drive.signedIn ? 'Connectez-vous pour activer la synchro.' : 'Les conflits sont résolus en « dernier écrit gagne » (comparaison <code>updatedAt</code>).'}
+      </p>
+    </div>
+
     <div class="card">
       <div class="card-head"><h2>Catégories</h2><button class="btn btn-ghost" data-add-cat>＋ Ajouter</button></div>
       <h3 class="muted">Dépenses</h3>
@@ -62,7 +123,7 @@ export function render(root, { navigate }) {
 
     <div class="card">
       <h2>Confidentialité</h2>
-      <p class="muted small">🔒 EuroPilot fonctionne entièrement hors ligne. Aucune donnée financière n'est envoyée à un serveur, aucun compte n'est requis, aucun traceur n'est utilisé. Le code source est ouvert (licence MIT).</p>
+      <p class="muted small">🔒 EuroPilot fonctionne entièrement hors ligne. Aucune donnée financière n'est envoyée à un serveur, aucun compte n'est requis, aucun traceur n'est utilisé. Le code source est ouvert (licence MIT). La synchro Drive, si vous l'activez, utilise uniquement votre propre Google Drive (appDataFolder).</p>
       <div class="btn-row wrap">
         <button class="btn btn-ghost" data-act="demo">🧪 Charger des données de démonstration</button>
         <button class="btn btn-ghost" data-act="demo-clear">🗑️ Supprimer les données de démonstration</button>
@@ -118,6 +179,78 @@ export function render(root, { navigate }) {
       }
     } catch (e) { console.error(e); toast('Erreur : ' + e.message, { type: 'error', duration: 7000 }); }
   });
+
+  // ---------- Drive bindings ----------
+  const driveBadge = $('#drive-badge', root);
+  const driveStatusText = $('#drive-status-text', root);
+  const driveLastSync = $('#drive-last-sync', root);
+  const driveFileId = $('#drive-file-id', root);
+  const driveConnect = $('#drive-connect', root);
+  const driveSyncBtn = $('#drive-sync', root);
+  const drivePush = $('#drive-push', root);
+  const drivePull = $('#drive-pull', root);
+  const driveDisconnect = $('#drive-disconnect', root);
+  const driveAuto = $('#drive-auto', root);
+  const driveHint = $('#drive-hint', root);
+  const driveClientInput = $('#drive-client-id', root);
+
+  function refreshDriveUI(s = getDriveStatus()) {
+    if (driveBadge) {
+      driveBadge.textContent = s.syncing ? 'Synchronisation…' : s.signedIn ? 'Connecté' : s.configured ? 'Non connecté' : 'Non configuré';
+      driveBadge.className = 'badge ' + (s.syncing ? '' : s.signedIn ? 'ok' : s.configured ? 'warn' : '');
+    }
+    if (driveStatusText) driveStatusText.textContent = s.syncing ? '🔄 Synchronisation…' : s.signedIn ? '🟢 Connecté' : s.configured ? '🟡 En attente de connexion' : '⚪ Non configuré';
+    if (driveLastSync) driveLastSync.textContent = formatLastSync(s.lastSync);
+    if (driveFileId) driveFileId.textContent = s.fileId ? s.fileId.slice(0, 12) + '…' : '—';
+    if (driveConnect) driveConnect.disabled = !s.configured || s.signedIn || s.syncing;
+    if (driveSyncBtn) { driveSyncBtn.disabled = !s.signedIn || s.syncing; driveSyncBtn.textContent = s.syncing ? '⏳ Synchronisation…' : '🔄 Synchroniser maintenant'; }
+    if (drivePush) drivePush.disabled = !s.signedIn || s.syncing;
+    if (drivePull) drivePull.disabled = !s.signedIn || s.syncing;
+    if (driveDisconnect) driveDisconnect.disabled = !s.signedIn;
+    if (driveAuto) { driveAuto.checked = !!s.autoSync; driveAuto.disabled = !s.signedIn; }
+    if (driveHint) driveHint.textContent = !s.configured ? '⚠️ Renseignez d’abord votre Client ID Google.' : !s.signedIn ? 'Connectez-vous pour activer la synchro.' : 'Les conflits sont résolus en « dernier écrit gagne » (comparaison updatedAt).';
+  }
+
+  const offDrive = onDriveStatus(refreshDriveUI);
+
+  // cleanup when navigating away (le render suivant recrée tout)
+  const prevUnmount = root._offDrive;
+  if (prevUnmount) prevUnmount();
+  root._offDrive = offDrive;
+
+  $('#drive-save-id', root).onclick = () => {
+    const v = driveClientInput.value.trim();
+    if (v && !/\.apps\.googleusercontent\.com$/.test(v)) {
+      toast('Le Client ID doit se terminer par .apps.googleusercontent.com', { type: 'error', duration: 6000 });
+      return;
+    }
+    setClientId(v);
+    toast(v ? 'Client ID enregistré' : 'Client ID effacé', { type: 'success' });
+  };
+  driveClientInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#drive-save-id', root).click(); });
+
+  driveConnect.onclick = async () => {
+    driveConnect.disabled = true;
+    try { await signIn({ prompt: true }); } catch (e) { toast(e.message, { type: 'error', duration: 7000 }); }
+  };
+  driveDisconnect.onclick = async () => {
+    if (await confirm('Se déconnecter de Google Drive ?<br>La sauvegarde restera sur votre Drive, mais EuroPilot n’y aura plus accès jusqu’à la prochaine connexion.', { title: 'Déconnexion', okLabel: 'Se déconnecter', danger: false })) {
+      signOut();
+    }
+  };
+  driveSyncBtn.onclick = async () => {
+    driveSyncBtn.disabled = true;
+    try { await syncNow({ direction: 'auto' }); } catch (e) { console.error(e); toast('Sync : ' + e.message, { type: 'error', duration: 7000 }); } finally { refreshDriveUI(); }
+  };
+  drivePush.onclick = async () => {
+    drivePush.disabled = true;
+    try { await pushToDrive(); } catch (e) { console.error(e); toast('Envoi : ' + e.message, { type: 'error', duration: 7000 }); } finally { refreshDriveUI(); }
+  };
+  drivePull.onclick = async () => {
+    drivePull.disabled = true;
+    try { await pullFromDrive({ confirmOverwrite: true }); } catch (e) { console.error(e); toast('Restauration : ' + e.message, { type: 'error', duration: 7000 }); } finally { refreshDriveUI(); }
+  };
+  driveAuto.onchange = (e) => setAutoSync(e.target.checked);
 }
 
 /** Formulaire catégorie */
