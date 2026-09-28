@@ -40,6 +40,61 @@ let syncTimer = null;
 let statusListeners = new Set();
 let isSyncing = false;
 
+// ---------- Erreurs amicales (traduction des erreurs Google) ----------
+/**
+ * Traduit les erreurs brutes Google (souvent en anglais) en message
+ * actionnable en français. Gère notamment :
+ *  - "The OAuth client was not found" (mauvais projet / mauvais type / Drive API off / Test user manquant)
+ *  - "access_denied" (compte non listé en Testing)
+ *  - "origin_mismatch" (capacitor://localhost oublié)
+ */
+export function friendlyDriveError(err) {
+  const raw = String(err?.message || err || '').trim() || String(err);
+  const low = raw.toLowerCase();
+
+  // Cas principal signalé : The OAuth client was not found.
+  if (low.includes('oauth client was not found') || low.includes('client was not found') || low.includes('deleted_client')) {
+    return (
+      'Client OAuth introuvable (The OAuth client was not found).\n\n' +
+      '1) Vérifiez le Client ID dans EuroPilot → Paramètres → Drive : il doit se terminer par .apps.googleusercontent.com et être de type « Application Web » (Cloud Console → Identifiants).\n' +
+      '2) Vérifiez que le bon projet est sélectionné et que « Google Drive API » est activée (Bibliothèque → Activer).\n' +
+      '3) Mode Testing : votre projet n\'autorise que les comptes listés dans « Écran de consentement OAuth → Test users ». Ajoutez l\'adresse Gmail de votre femme (et la vôtre) puis attendez 2 min, ou cliquez sur « PUBLISH APP » pour passer en Production (plus de limite 7 jours).\n' +
+      '4) Origines JavaScript autorisées (même écran Identifiants) : ajoutez https://onerstyle.github.io, http://localhost, http://localhost:8080, capacitor://localhost et https://localhost.\n\n' +
+      `Détail technique : ${raw}`
+    );
+  }
+  if (low.includes('invalid_client')) {
+    // invalid_client couvre aussi le cas ci-dessus quand il vient du token endpoint
+    return friendlyDriveError('The OAuth client was not found. ' + raw);
+  }
+  if (low.includes('access_not_configured') || low.includes('has not been used in project') || low.includes('access blocked') && low.includes('drive')) {
+    return (
+      'Google Drive API non activée pour ce projet.\n' +
+      '→ Cloud Console → Bibliothèque → cherchez « Google Drive API » → Activer → attendez 2-3 min puis reconnectez-vous.\n\n' +
+      `Détail : ${raw}`
+    );
+  }
+  if (low.includes('origin') || low.includes('not a valid origin') || low.includes('unauthorized_origin') || low.includes('mismatch') && low.includes('origin')) {
+    return (
+      `Origine non autorisée (${raw}).\n` +
+      `→ Cloud Console → Identifiants → votre ID client Web → « Origines JavaScript autorisées » → ajoutez exactement :\n` +
+      `  ${location.origin}\n  https://onerstyle.github.io\n  capacitor://localhost\n  http://localhost\n  https://localhost\n` +
+      `Puis « Enregistrer » et réessayez.`
+    );
+  }
+  if (low.includes('access_denied') && (low.includes('consent') || low.includes('denied') || low.includes('test user'))) {
+    return (
+      'Accès refusé : ce compte Google n\'est pas autorisé (projet en mode Testing).\n' +
+      '→ Cloud Console → Écran de consentement OAuth → Test users → Ajouter l\'adresse Gmail concernée, ou Publier l\'app.\n\n' +
+      `Détail : ${raw}`
+    );
+  }
+  if (low.includes('idpiframe') || low.includes('popup_closed') || low.includes('popup closed')) {
+    return 'Fenêtre de connexion fermée avant la fin. Réessayez et autorisez l\'accès Drive quand Google le demande.';
+  }
+  return raw;
+}
+
 // ---------- Persistance token & meta ----------
 function loadToken() {
   try {
@@ -113,13 +168,21 @@ async function ensureTokenClient() {
   await loadGis();
   const clientId = getClientId();
   if (!clientId) throw new Error('Client ID Google Drive non configuré (voir Paramètres → Google Drive)');
+  // validation rapide du format
+  if (!/\.apps\.googleusercontent\.com$/i.test(clientId)) {
+    throw new Error('Client ID invalide : il doit se terminer par .apps.googleusercontent.com (type Application Web). Vérifiez le copier-coller depuis Cloud Console → Identifiants.');
+  }
   if (tokenClient && tokenClient._cid === clientId) return tokenClient;
-  tokenClient = globalThis.google.accounts.oauth2.initTokenClient({
-    client_id: clientId,
-    scope: SCOPES,
-    prompt: '', // silent si possible
-    callback: () => {},
-  });
+  try {
+    tokenClient = globalThis.google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: SCOPES,
+      prompt: '', // silent si possible
+      callback: () => {},
+    });
+  } catch (e) {
+    throw new Error(friendlyDriveError(e));
+  }
   tokenClient._cid = clientId;
   return tokenClient;
 }
@@ -151,11 +214,14 @@ export async function signIn({ prompt = true } = {}) {
     client.callback = (resp) => {
       if (done) return; done = true;
       if (resp.error) {
-        // user closed or denied
-        reject(new Error(resp.error_description || resp.error || 'Connexion annulée'));
+        const msg = resp.error_description || resp.error || 'Connexion annulée';
+        // Traduction amicale pour les cas les plus bloquants
+        const friendly = friendlyDriveError(msg);
+        // Si c'est le cas "client not found" ou "access_denied" on fournit un message long et actionnable
+        reject(new Error(friendly));
         return;
       }
-      if (!resp.access_token) { reject(new Error('Aucun access_token reçu')); return; }
+      if (!resp.access_token) { reject(new Error('Aucun access_token reçu — réessayez et autorisez l\'accès Drive')); return; }
       saveToken(resp.access_token, Number(resp.expires_in || 3600));
       emitStatus();
       toast('Connecté à Google Drive', { type: 'success' });
@@ -165,9 +231,16 @@ export async function signIn({ prompt = true } = {}) {
     try {
       if (prompt) client.requestAccessToken({ prompt: 'consent' });
       else client.requestAccessToken({ prompt: '' });
-    } catch (e) { if (!done) { done = true; reject(e); } }
-    // timeout 60s
-    setTimeout(() => { if (!done) { done = true; reject(new Error('Connexion expirée')); } }, 60_000);
+    } catch (e) {
+      if (!done) { done = true; reject(new Error(friendlyDriveError(e))); }
+    }
+    // timeout 60s — message amical si Google ne répond pas (souvent origine bloquée)
+    setTimeout(() => {
+      if (!done) {
+        done = true;
+        reject(new Error(friendlyDriveError('Connexion expirée — vérifiez les Origines JavaScript autorisées (ajoutez capacitor://localhost et ' + location.origin + ') et que le Client ID est bien de type Application Web.')));
+      }
+    }, 60_000);
   });
 }
 
@@ -199,19 +272,19 @@ async function driveFetch(url, opts = {}) {
   if (!isSignedIn()) {
     // tentative silencieuse
     const ok = await signInSilently();
-    if (!ok) throw new Error('Non connecté à Google Drive — veuillez vous connecter dans Paramètres');
+    if (!ok) throw new Error(friendlyDriveError('Non connecté à Google Drive — veuillez vous connecter dans Paramètres (si vous voyez "OAuth client was not found", ajoutez ce compte dans Test users ou publiez l\'app).'));
   }
   const headers = { Authorization: `Bearer ${accessToken}`, ...(opts.headers || {}) };
   const res = await fetch(url, { ...opts, headers });
   if (res.status === 401) {
     clearToken();
-    throw new Error('Session Google expirée — reconnectez-vous');
+    throw new Error(friendlyDriveError('Session Google expirée — reconnectez-vous. Si l\'erreur persiste : ' + ' ajoutez ce compte dans Test users ou publiez l\'app.'));
   }
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
     let msg = `Drive API ${res.status}`;
-    try { const j = JSON.parse(txt); msg = j.error?.message || msg; } catch { if (txt) msg += ` — ${txt.slice(0, 200)}`; }
-    throw new Error(msg);
+    try { const j = JSON.parse(txt); msg = j.error?.message || msg; if (j.error?.details) msg += ' — ' + JSON.stringify(j.error.details).slice(0, 300); } catch { if (txt) msg += ` — ${txt.slice(0, 300)}`; }
+    throw new Error(friendlyDriveError(msg));
   }
   return res;
 }
@@ -298,7 +371,7 @@ async function uploadFile({ fileId = null, content }) {
 
 // ---------- Public sync ops ----------
 export async function pushToDrive() {
-  if (!isDriveConfigured()) throw new Error('Google Drive non configuré — renseignez votre Client ID dans Paramètres');
+  if (!isDriveConfigured()) throw new Error(friendlyDriveError('Google Drive non configuré — renseignez votre Client ID dans Paramètres'));
   if (!isSignedIn()) await signIn({ prompt: true });
   setSyncing(true);
   try {
@@ -308,16 +381,16 @@ export async function pushToDrive() {
     emitStatus();
     toast('Sauvegarde Drive enregistrée', { type: 'success' });
     return res;
-  } finally { setSyncing(false); }
+  } catch (e) { throw new Error(friendlyDriveError(e)); } finally { setSyncing(false); }
 }
 
 export async function pullFromDrive({ confirmOverwrite = true } = {}) {
-  if (!isDriveConfigured()) throw new Error('Google Drive non configuré');
+  if (!isDriveConfigured()) throw new Error(friendlyDriveError('Google Drive non configuré'));
   if (!isSignedIn()) await signIn({ prompt: true });
   setSyncing(true);
   try {
     const fileId = await findFile();
-    if (!fileId) throw new Error('Aucune sauvegarde EuroPilot trouvée sur ce Drive');
+    if (!fileId) throw new Error('Aucune sauvegarde EuroPilot trouvée sur ce Drive — faites d\'abord « Envoyer vers Drive » sur un appareil qui a des données.');
     const res = await driveFetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`, { headers: { Accept: DRIVE_MIME } });
     const text = await res.text();
     const data = JSON.parse(text);
@@ -337,12 +410,12 @@ export async function pullFromDrive({ confirmOverwrite = true } = {}) {
     emitStatus();
     toast(`Sauvegarde Drive restaurée (${data.transactions.length} opérations)`, { type: 'success', duration: 6000 });
     return data;
-  } finally { setSyncing(false); }
+  } catch (e) { throw new Error(friendlyDriveError(e)); } finally { setSyncing(false); }
 }
 
 // Sync intelligent : compare updatedAt local vs distant, last-write-wins
 export async function syncNow({ direction = 'auto' } = {}) {
-  if (!isDriveConfigured()) throw new Error('Google Drive non configuré');
+  if (!isDriveConfigured()) throw new Error(friendlyDriveError('Google Drive non configuré'));
   if (!isSignedIn()) await signIn({ prompt: true });
   setSyncing(true);
   try {
@@ -413,7 +486,7 @@ export async function syncNow({ direction = 'auto' } = {}) {
       toast('Déjà synchronisé', { type: 'info' });
       return { action: 'noop' };
     }
-  } finally { setSyncing(false); }
+  } catch (e) { throw new Error(friendlyDriveError(e)); } finally { setSyncing(false); }
 }
 
 // ---------- Auto-sync ----------
