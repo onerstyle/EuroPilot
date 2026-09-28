@@ -21,5 +21,4 @@
 // mode avancé (chaque utilisateur saisit son propre Client ID).
 // ============================================================
 
-export const BUILTIN_CLIENT_ID = "";
-// Exemple : export const BUILTIN_CLIENT_ID = "1234567890-abcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com";
+export const BUILTIN_CLIENT_ID = "606916072542-khki83vgbl1ikfpi21qsvd0cg6tde76c.apps.googleusercontent.com";
