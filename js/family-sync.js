@@ -153,7 +153,7 @@ function getEndpoint() {
   // Preview e2b auto : si on est sur https://8000-xxx.e2b.app et que la config est encore en REPLACE_ME,
   // on pointe automatiquement vers le Worker preview https://8787-xxx.e2b.app (mémoire volatile, pour tester immédiatement)
   try {
-    const isPlaceholder = (typeof FAMILY_SYNC_ENDPOINT === 'string' && FAMILY_SYNC_ENDPOINT.includes('REPLACE_ME')) || isFirebasePlaceholder() || isSupabasePlaceholder();
+    const isPlaceholder = (typeof FAMILY_SYNC_ENDPOINT === 'string' && FAMILY_SYNC_ENDPOINT.includes('REPLACE_ME'));
     if (isPlaceholder && typeof location !== 'undefined' && location.hostname && location.hostname.includes('e2b.app')) {
       const workerHost = location.hostname.replace(/^8000-/, '8787-');
       if (workerHost !== location.hostname) return `https://${workerHost}`;
