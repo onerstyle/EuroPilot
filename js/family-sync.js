@@ -907,13 +907,15 @@ export async function importFamilySharePayload(b64, code) {
   return data;
 }
 
-// ---------- Auto-sync ----------
+// ---------- Auto-sync (robuste) ----------
+let autoPoll = null;
 function scheduleAutoPush() {
   const { autoSync, code } = getFamilyStatus();
   if (!autoSync || !code) return;
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(async () => {
-    try { await pushToFamily(); } catch (e) { console.warn('[family] auto-push échoué', e); }
+    // Sync intelligente (pull → compare → push/pull) — évite d'écraser le distant avec des données périmées
+    try { await syncFamilyNow({ direction: 'auto' }); } catch (e) { console.warn('[family] auto-sync échoué', e); }
   }, 2000);
 }
 export function initFamilySync() {
@@ -933,11 +935,49 @@ export function initFamilySync() {
   if (s.code && !meta.code) saveFamilyMeta({ code: s.code });
   emitStatus();
   store.subscribe(() => scheduleAutoPush());
-  // si code présent + autoSync, push initial silencieux
+  // si code présent + autoSync, sync initial intelligente (pull d'abord) — évite d'écraser si l'autre a mis à jour
   const st = getFamilyStatus();
-  if (st.code && st.autoSync) setTimeout(() => pushToFamily().catch(() => {}), 3000);
-  window.addEventListener('online', () => emitStatus());
+  if (st.code && st.autoSync) setTimeout(() => syncFamilyNow({ direction: 'auto' }).catch(() => {}), 2500);
+  // Sync quand on revient sur l'app (onglet redevient visible) ou quand on repasse en ligne — capte les modifs de l'autre
+  const onVisibleSync = () => {
+    const s = getFamilyStatus();
+    if (!s.autoSync || !s.code) return;
+    if (document.visibilityState === 'visible') {
+      syncFamilyNow({ direction: 'auto' }).catch(() => {});
+    }
+  };
+  const onOnlineSync = () => {
+    const s = getFamilyStatus();
+    if (!s.autoSync || !s.code) return;
+    emitStatus();
+    syncFamilyNow({ direction: 'auto' }).catch(() => {});
+  };
+  document.addEventListener('visibilitychange', onVisibleSync);
+  window.addEventListener('online', onOnlineSync);
   window.addEventListener('offline', () => emitStatus());
+  // Poll léger toutes les 30s quand l'app est visible et autoSync actif — garde les 2 téléphones à jour sans action manuelle
+  const startPoll = () => {
+    if (autoPoll) clearInterval(autoPoll);
+    if (!getFamilyStatus().autoSync || !getFamilyStatus().code) return;
+    autoPoll = setInterval(() => {
+      if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+      const s = getFamilyStatus();
+      if (!s.autoSync || !s.code) return;
+      syncFamilyNow({ direction: 'auto' }).catch(() => {});
+    }, 30000);
+  };
+  const stopPoll = () => { if (autoPoll) { clearInterval(autoPoll); autoPoll = null; } };
+  startPoll();
+  let lastAuto = st.autoSync, lastCode = st.code;
+  setInterval(() => {
+    const s = getFamilyStatus();
+    if (s.autoSync !== lastAuto || s.code !== lastCode) {
+      lastAuto = s.autoSync; lastCode = s.code;
+      if (s.autoSync && s.code) startPoll();
+      else stopPoll();
+    }
+  }, 5000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') startPoll(); else stopPoll(); });
   // support du hash #family=CODE&data=... pour import direct par lien
   try {
     const h = location.hash || '';
