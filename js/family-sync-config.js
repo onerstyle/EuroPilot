@@ -28,5 +28,5 @@
 
 // Remplace par ton URL Firebase dès le projet créé :
 // ex: "https://europilot-family-default-rtdb.europe-west1.firebasedatabase.app/family"
-export const FAMILY_SYNC_ENDPOINT = "https://REPLACE_ME-default-rtdb.europe-west1.firebasedatabase.app/family";
+export const FAMILY_SYNC_ENDPOINT = "https://europilot-family-default-rtdb.europe-west1.firebasedatabase.app/family";
 export const FAMILY_SYNC_KEY = "";
