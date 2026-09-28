@@ -227,15 +227,18 @@ async function getJsonStorage(url) {
   const res = await fetch(url, { method: 'GET' });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
-    if (res.status === 404 && txt.includes('Item not found')) {
-      throw new Error('Salon vide — fais d’abord « Envoyer » sur un appareil qui a des données');
+    // jsonstorage renvoie 404 {"error":"Item not found"} quand le salon n'existe pas encore
+    // On ne veut pas afficher une erreur bloquante : c'est juste un salon vide
+    if (res.status === 404 && /item not found/i.test(txt)) {
+      return null;
     }
     throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
   }
   const j = await res.json().catch(() => null);
   if (!j || typeof j.data !== 'string') {
-    // ancien format kvdb text/plain stocké dans jsonstorage ?
     if (typeof j === 'string') return j;
+    // si le backend a stocké un objet vide ou autre, on considère comme vide
+    if (j && j.error && /item not found/i.test(JSON.stringify(j))) return null;
     throw new Error('Données famille invalides (jsonstorage)');
   }
   return j.data;
@@ -335,12 +338,22 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
     let b64 = '';
     if (endpoint.includes('jsonstorage.net')) {
       b64 = await getJsonStorage(url);
+      if (!b64) {
+        toast('Salon vide — fais « Envoyer » sur l\'appareil qui a des données, puis « Restaurer » ici', { type: 'info', duration: 6000 });
+        return null;
+      }
     } else {
       const res = await familyFetch(url, { method: 'GET' });
       b64 = (await res.text()).trim();
-      if (!b64) throw new Error('Salon vide — fais d’abord « Envoyer » sur un appareil qui a des données');
+      if (!b64) {
+        toast('Salon vide — fais « Envoyer » sur l\'appareil qui a des données', { type: 'info', duration: 6000 });
+        return null;
+      }
     }
-    if (!b64) throw new Error('Salon vide — fais d’abord « Envoyer » sur un appareil qui a des données');
+    if (!b64) {
+      toast('Salon vide — fais « Envoyer » d\'abord', { type: 'info', duration: 6000 });
+      return null;
+    }
     const jsonStr = await decryptFamilyPayload(b64, code);
     const data = JSON.parse(jsonStr);
     if (!data.transactions || !Array.isArray(data.transactions)) throw new Error('Données famille invalides');
@@ -360,8 +373,11 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
     toast(`Données famille restaurées (${data.transactions.length} opérations)`, { type: 'success', duration: 6000 });
     return data;
   } catch (e) {
-    if (String(e.message).includes('404') || String(e.message).includes('404')) {
-      throw new Error('Salon vide ou code incorrect — vérifie le code ou fais « Envoyer » d’abord');
+    const msg = String(e.message);
+    if (msg.includes('Salon vide') || msg.includes('Item not found') || msg.includes('404')) {
+      // Salon vide n'est pas une erreur bloquante : on informe l'utilisateur
+      if (!msg.includes('Salon vide')) toast('Salon vide — fais « Envoyer » sur l\'appareil source', { type: 'info', duration: 6000 });
+      return null;
     }
     throw e;
   } finally { setSyncing(false); }
@@ -394,7 +410,13 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
         remoteUpdatedAt = remote.updatedAt || remote.exportedAt;
       }
     } catch (e) {
-      if (!String(e.message).includes('404') && !String(e.message).includes('Salon vide')) throw e;
+      const msg = String(e.message);
+      if (msg.includes('Salon vide') || msg.includes('Item not found')) {
+        // salon vide → on va créer le premier push
+        remote = null;
+      } else if (!msg.includes('404')) {
+        throw e;
+      }
     }
     const localUpdatedAt = store.state.updatedAt || loadMetaExtra().lastUpdatedAt;
     const doPush = async () => {
