@@ -1,28 +1,32 @@
 // ============================================================
 // family-sync-config.js — Configuration Sync Famille
 //
-// Backend par défaut : https://keyvalue.immanuel.co (KV gratuit, CORS,
-// sans email, bucket = appKey fyq2n3yb). Le CODE sert de clé
-// (https://keyvalue.immanuel.co/api/KeyVal/<appKey>/<CODE>)
-// et la donnée est chiffrée côté client (AES-GCM dérivée du CODE)
-// donc le serveur ne voit que du base64. Données découpées en chunks
-// de 900 chars (limite 1024 de l'API) pour les gros budgets.
+// Backend par défaut : Supabase (REST gratuit, CORS, sans préflight bloquant)
+// Table : family(code text PK, data text, updated_at timestamptz)
+// RLS : policy "Allow all" (for all using true) — données chiffrées
+//       côté client (AES-GCM dérivée du CODE) donc le serveur ne voit que du base64.
 //
-// Anciens défauts :
-// - kvdb.io (bucket fixe) → 403 email not verified (nécessite activation)
+// Anciens backends (conservés en fallback si l'endpoint pointe encore dessus) :
+// - https://keyvalue.immanuel.co (bucket fyq2n3yb/bq4rx7id) → 500/Failed to fetch instable
+// - kvdb.io (bucket fixe) → 403 email not verified
 // - api.jsonstorage.net → 404 Item not found au PUT sur salon vide
-// Tous conservés en fallback.
 //
-// Pour utiliser votre propre backend (Supabase, Firebase, Worker...) :
-//  - Remplacez FAMILY_SYNC_ENDPOINT par l'URL de votre endpoint
-//  - Adaptez éventuellement FAMILY_SYNC_KEY si votre API l'exige
+// Setup Supabase 2 min — voir SUPABASE_SETUP.md :
+//  1. Crée un projet sur supabase.com/dashboard
+//  2. SQL Editor → crée la table family (voir guide)
+//  3. Project Settings → API → copie Project URL + anon key ici
 //
-// Laissez vide ("") pour désactiver le cloud et n'utiliser que le
-// partage manuel (QR / lien / fichier) — utile en mode hors ligne.
-//
-// Vous pouvez aussi surcharger au build via :
-//   globalThis.__EUROPILOT_FAMILY_ENDPOINT__ = "https://votre-worker.workers.dev"
+// Pour utiliser votre propre backend (Worker, Firebase, etc.) :
+//  - Option live (console) : localStorage.setItem('europilot.family.endpoint','https://xxx.supabase.co/rest/v1/family') + localStorage.setItem('europilot.family.key','eyJ...')
+//  - Remplacez FAMILY_SYNC_ENDPOINT / FAMILY_SYNC_KEY
+//  - Laissez vide ("") pour désactiver le cloud et n'utiliser que le
+//    partage manuel (QR / lien / fichier) — utile en mode hors ligne.
+//  - Surcharge au build possible via :
+//      globalThis.__EUROPILOT_FAMILY_ENDPOINT__ = "https://xxx.workers.dev"
 // ============================================================
 
-export const FAMILY_SYNC_ENDPOINT = "https://keyvalue.immanuel.co/api/KeyVal";
-export const FAMILY_SYNC_KEY = "fyq2n3yb";
+// Remplace les deux lignes ci-dessous par tes valeurs Supabase dès le projet créé :
+// ex: "https://abcdefghijk.supabase.co/rest/v1/family"
+export const FAMILY_SYNC_ENDPOINT = "https://REPLACE_ME.supabase.co/rest/v1/family";
+// ex: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+export const FAMILY_SYNC_KEY = "REPLACE_ME_ANON_KEY";
