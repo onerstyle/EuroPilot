@@ -30,6 +30,8 @@ import { toast } from './ui.js';
 import { FAMILY_SYNC_ENDPOINT, FAMILY_SYNC_KEY } from './family-sync-config.js';
 
 const DEFAULT_ENDPOINT = (typeof globalThis.__EUROPILOT_FAMILY_ENDPOINT__ === 'string' && globalThis.__EUROPILOT_FAMILY_ENDPOINT__.trim()) || (typeof FAMILY_SYNC_ENDPOINT === 'string' && FAMILY_SYNC_ENDPOINT.trim()) || 'https://api.jsonstorage.net/v1/json/europilot';
+const LS_ENDPOINT_KEY = 'europilot.family.endpoint';
+const LS_KEY_KEY = 'europilot.family.key';
 const STORAGE_KEY = 'europilot.family.v1'; // { code, lastSync, autoSync }
 const META_KEY = 'europilot.family.meta.v1'; // { lastUpdatedAt }
 
@@ -142,20 +144,48 @@ function setSyncing(v) { isSyncing = v; emitStatus(); }
 
 // ---------- Backend ----------
 function getEndpoint() {
+  try {
+    const ls = localStorage.getItem(LS_ENDPOINT_KEY);
+    if (ls && ls.trim()) return ls.trim();
+  } catch {}
   const fromGlobal = typeof globalThis.__EUROPILOT_FAMILY_ENDPOINT__ === 'string' ? globalThis.__EUROPILOT_FAMILY_ENDPOINT__.trim() : '';
   if (fromGlobal) return fromGlobal;
   if (typeof FAMILY_SYNC_ENDPOINT === 'string' && FAMILY_SYNC_ENDPOINT.trim()) return FAMILY_SYNC_ENDPOINT.trim();
   return DEFAULT_ENDPOINT;
 }
+function getFamilySyncKey() {
+  try {
+    const ls = localStorage.getItem(LS_KEY_KEY);
+    if (ls && ls.trim()) return ls.trim();
+  } catch {}
+  if (typeof FAMILY_SYNC_KEY === 'string' && FAMILY_SYNC_KEY.trim()) return FAMILY_SYNC_KEY.trim();
+  return '';
+}
+export function setFamilyEndpoint(url, key) {
+  try {
+    if (url) localStorage.setItem(LS_ENDPOINT_KEY, url.trim());
+    else localStorage.removeItem(LS_ENDPOINT_KEY);
+    if (key !== undefined) {
+      if (key) localStorage.setItem(LS_KEY_KEY, key.trim());
+      else localStorage.removeItem(LS_KEY_KEY);
+    }
+  } catch {}
+}
+export function getFamilyEndpointInfo() {
+  return { endpoint: getEndpoint(), key: getFamilySyncKey(), isPlaceholder: isSupabasePlaceholder() };
+}
 function familyUrl(code) {
   const c = formatCode(code);
   const base = getEndpoint().replace(/\/+$/, '');
   if (!base) return null;
+  if (base.includes('supabase.co')) {
+    return `${base}?code=eq.${encodeURIComponent(c)}`;
+  }
   if (base.includes('keyvalue.immanuel.co')) {
     // keyvalue : https://keyvalue.immanuel.co/api/KeyVal/<appKey>/<CODE>
     // Le CODE est la clé, la valeur est le base64 découpé en chunks
     // familyUrl retourne la base + appKey + code (pour GET du meta)
-    const appKey = FAMILY_SYNC_KEY || 'fyq2n3yb';
+    const appKey = getFamilySyncKey() || 'fyq2n3yb';
     return `${base}/${encodeURIComponent(appKey)}/${encodeURIComponent(c)}`;
   }
   if (base.includes('jsonstorage.net')) {
@@ -342,6 +372,70 @@ async function getKeyValueChunked(code) {
   return cleaned;
 }
 
+// Supabase helpers
+function isSupabasePlaceholder() {
+  const ep = getEndpoint() || '';
+  return ep.includes('REPLACE_ME') || (getFamilySyncKey() || '').includes('REPLACE_ME');
+}
+async function supabaseHeaders() {
+  const key = getFamilySyncKey() || '';
+  return {
+    'apikey': key,
+    'Authorization': `Bearer ${key}`,
+    'Content-Type': 'application/json',
+    'Prefer': 'return=representation'
+  };
+}
+async function putSupabase(code, b64, updatedAt) {
+  const base = getEndpoint().replace(/\/+$/, '');
+  // Upsert en 1 requête : si code existe → update, sinon insert
+  const headers = await supabaseHeaders();
+  headers['Prefer'] = 'return=representation,resolution=merge-duplicates';
+  const res = await fetch(`${base}?onConflict=code`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ code, data: b64, updated_at: updatedAt })
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    // Si la table n'existe pas encore (PGRST205) → message clair
+    if (txt.includes('PGRST205') || txt.includes('Could not find the table')) {
+      throw new Error(`Table Supabase "family" manquante — exécute le SQL de SUPABASE_SETUP.md puis réessaie.`);
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`Supabase 401/403 — vérifie Project URL / anon key dans family-sync-config.js`);
+    }
+    throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
+  }
+  return res;
+}
+async function getSupabase(code) {
+  const base = getEndpoint().replace(/\/+$/, '');
+  const headers = await supabaseHeaders();
+  const res = await fetch(`${base}?code=eq.${encodeURIComponent(code)}&select=data,updated_at`, {
+    method: 'GET',
+    headers
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    if (res.status === 404) return null;
+    throw new Error(`Sync famille ${res.status} — ${txt.slice(0,200) || res.statusText}`);
+  }
+  const j = await res.json().catch(() => null);
+  if (!j || !Array.isArray(j) || j.length === 0) return null;
+  return j[0].data;
+}
+async function showFamilySetupHelp(title, detail) {
+  try {
+    const { openModal } = await import('./ui.js');
+    openModal({
+      title,
+      content: `<p><b>Supabase non configuré</b></p><p>${detail}</p><p class="muted small">Endpoint actuel : <code>${getEndpoint()}</code></p><ol class="muted small" style="text-align:left"><li>Crée un projet sur <a href="https://supabase.com/dashboard" target="_blank">supabase.com/dashboard</a></li><li>SQL Editor → crée la table <code>family</code> (voir SUPABASE_SETUP.md)</li><li>Dans la console (F12), colle :<br><code style="word-break:break-all">localStorage.setItem('europilot.family.endpoint','https://xxx.supabase.co/rest/v1/family'); localStorage.setItem('europilot.family.key','eyJ...'); location.reload();</code></li></ol><p class="muted small">En attendant, utilise le QR / fichier ci-dessous :</p>`,
+      footer: `<button class="btn btn-primary" data-close>Fermer</button>`
+    });
+  } catch {}
+}
+
 // ---------- Payload ----------
 function buildFamilyPayload() {
   const exportedAt = new Date().toISOString();
@@ -407,11 +501,17 @@ export async function pushToFamily() {
     const jsonStr = JSON.stringify(payload);
     const b64 = await encryptFamilyPayload(jsonStr, code);
     const endpoint = getEndpoint();
+    const isSupabase = endpoint.includes('supabase.co');
+    if (isSupabase && isSupabasePlaceholder()) {
+      throw new Error('Supabase non configuré — remplace REPLACE_ME dans js/family-sync-config.js (voir SUPABASE_SETUP.md) puis recharge la page.');
+    }
     const tryKeyValueFallback = async () => {
       // fallback direct vers keyvalue sans passer par la config cachée
       await putKeyValueChunked(code, b64);
     };
-    if (endpoint.includes('keyvalue.immanuel.co')) {
+    if (isSupabase) {
+      await putSupabase(code, b64, payload.updatedAt);
+    } else if (endpoint.includes('keyvalue.immanuel.co')) {
       await putKeyValueChunked(code, b64);
     } else if (endpoint.includes('jsonstorage.net')) {
       try {
@@ -452,6 +552,26 @@ export async function pushToFamily() {
     toast('Données famille envoyées', { type: 'success' });
   } catch (e) {
     const msg = String(e.message);
+    if (msg.includes('Supabase non configuré') || msg.includes('REPLACE_ME') || msg.includes('Supabase 401') || msg.includes('Table Supabase')) {
+      try {
+        const { openModal } = await import('./ui.js');
+        const code = getFamilyStatus().code;
+        let qrBlock = '';
+        try {
+          const { b64 } = await exportFamilySharePayload();
+          const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(b64.slice(0,800))}`;
+          qrBlock = `<div style="text-align:center;margin-top:12px"><img src="${qrUrl}" style="border:1px solid var(--border);border-radius:12px"><p class="muted small">QR de secours (partage manuel)</p></div>`;
+        } catch {}
+        openModal({
+          title: 'Configuration Supabase requise',
+          content: `<p>${msg}</p><p class="muted small">Vois <b>SUPABASE_SETUP.md</b> ou colle dans la console (F12) :</p><pre style="white-space:pre-wrap;word-break:break-all;font-size:11px;border:1px solid var(--border);padding:8px;border-radius:8px">localStorage.setItem('europilot.family.endpoint','https://xxx.supabase.co/rest/v1/family');
+localStorage.setItem('europilot.family.key','eyJ...');
+location.reload();</pre>${qrBlock}`,
+          footer: `<button class="btn btn-primary" data-close>Fermer</button>`
+        });
+      } catch {}
+      throw new Error(msg);
+    }
     if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed') || msg.includes('fetch failed')) {
       // Propose directement le QR en fallback
       try {
@@ -477,11 +597,17 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
   setSyncing(true);
   try {
     const endpoint = getEndpoint();
+    const isSupabasePull = endpoint.includes('supabase.co');
+    if (isSupabasePull && isSupabasePlaceholder()) {
+      throw new Error('Supabase non configuré — remplace REPLACE_ME dans js/family-sync-config.js (voir SUPABASE_SETUP.md)');
+    }
     let b64 = '';
     const tryKeyValueRead = async () => {
       try { return await getKeyValueChunked(code); } catch (e) { console.warn('[family] fallback keyvalue read échoué', e); return null; }
     };
-    if (endpoint.includes('keyvalue.immanuel.co')) {
+    if (isSupabasePull) {
+      b64 = await getSupabase(code);
+    } else if (endpoint.includes('keyvalue.immanuel.co')) {
       b64 = await getKeyValueChunked(code);
       if (!b64) {
         toast('Salon vide — fais « Envoyer » sur l\'appareil qui a des données, puis « Restaurer » ici', { type: 'info', duration: 6000 });
@@ -545,6 +671,10 @@ export async function pullFromFamily({ confirmOverwrite = true } = {}) {
     return data;
   } catch (e) {
     const msg = String(e.message);
+    if (msg.includes('Supabase non configuré') || msg.includes('REPLACE_ME') || msg.includes('Supabase 401') || msg.includes('Table Supabase')) {
+      await showFamilySetupHelp('Configuration Supabase requise', msg);
+      throw new Error(msg);
+    }
     if (msg.includes('Salon vide') || msg.includes('Item not found') || msg.includes('404')) {
       // Salon vide n'est pas une erreur bloquante : on informe l'utilisateur
       if (!msg.includes('Salon vide')) toast('Salon vide — fais « Envoyer » sur l\'appareil source', { type: 'info', duration: 6000 });
@@ -559,6 +689,7 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
   const url = familyUrl(code);
   if (!url) throw new Error('Aucun backend');
   const endpoint = getEndpoint();
+  const isSupabaseSync = endpoint.includes('supabase.co');
   const isKeyValue = endpoint.includes('keyvalue.immanuel.co');
   const isJsonStorage = endpoint.includes('jsonstorage.net');
   const isKvdb = endpoint.includes('kvdb.io');
@@ -568,7 +699,9 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
     let remoteUpdatedAt = null;
     try {
       let b64 = '';
-      if (isKeyValue) {
+      if (isSupabaseSync) {
+        b64 = await getSupabase(code);
+      } else if (isKeyValue) {
         b64 = await getKeyValueChunked(code);
       } else if (isJsonStorage) {
         b64 = await getJsonStorage(url);
@@ -594,9 +727,12 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
     }
     const localUpdatedAt = store.state.updatedAt || loadMetaExtra().lastUpdatedAt;
     const doPush = async () => {
+      if (isSupabaseSync && isSupabasePlaceholder()) throw new Error('Supabase non configuré — voir SUPABASE_SETUP.md');
       const payload = buildFamilyPayload();
       const b64 = await encryptFamilyPayload(JSON.stringify(payload), code);
-      if (isKeyValue) {
+      if (isSupabaseSync) {
+        await putSupabase(code, b64, payload.updatedAt);
+      } else if (isKeyValue) {
         await putKeyValueChunked(code, b64);
       } else if (isJsonStorage) {
         await putJsonStorage(url, b64, payload.updatedAt);
@@ -656,6 +792,12 @@ export async function syncFamilyNow({ direction = 'auto' } = {}) {
       toast('Déjà synchronisé', { type: 'info' });
       return { action: 'noop' };
     }
+  } catch (e) {
+    const msg = String(e.message || e);
+    if (msg.includes('Supabase non configuré') || msg.includes('REPLACE_ME') || msg.includes('Supabase 401') || msg.includes('Table Supabase')) {
+      await showFamilySetupHelp('Configuration Supabase requise', msg);
+    }
+    throw e;
   } finally { setSyncing(false); }
 }
 
