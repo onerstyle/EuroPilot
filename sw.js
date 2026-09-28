@@ -5,7 +5,7 @@ const FILES = [
   './', './index.html', './app.html', './css/style.css', './manifest.webmanifest',
   './assets/icon.svg',
   './js/main.js', './js/store.js', './js/utils.js', './js/charts.js', './js/ui.js',
-  './js/recurring.js', './js/defaults.js', './js/io.js',
+  './js/recurring.js', './js/defaults.js', './js/io.js', './js/family-sync.js', './js/family-sync-config.js',
   './js/views/dashboard.js', './js/views/transactions.js', './js/views/calendar.js',
   './js/views/budgets.js', './js/views/stats.js', './js/views/accounts.js',
   './js/views/years.js', './js/views/settings.js'

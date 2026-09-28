@@ -1,22 +1,22 @@
 // ============================================================
 // views/settings.js — Paramètres : thème, catégories, moyens de paiement,
-// import/export, sauvegarde, suppression des données + Google Drive
+// import/export, sauvegarde, suppression + Synchronisation Famille
 // ============================================================
 
 import { store } from '../store.js';
 import { $, $$, esc, fmtEuro } from '../utils.js';
 import { openModal, closeModal, confirm, toast, toastUndo, optionList } from '../ui.js';
-import { exportCSV, exportJSON, exportBackup, importCSV, importJSON, readFile } from '../io.js';
+import { exportCSV, exportJSON, exportBackup, importCSV, importJSON, readFile, download } from '../io.js';
 import { applyTheme } from '../main.js';
 import {
-  getDriveStatus, onDriveStatus, signIn, signOut, pushToDrive, pullFromDrive, syncNow,
-  setAutoSync, setClientId, formatLastSync, isSimpleMode, getClientIdSource
-} from '../drive.js';
+  getFamilyStatus, onFamilyStatus, createFamilySalon, joinFamilySalon, leaveFamilySalon,
+  pushToFamily, pullFromFamily, syncFamilyNow, setFamilyAutoSync, formatFamilyLastSync
+} from '../family-sync.js';
 
 export function render(root, { navigate }) {
   const { state } = store;
   const size = new Blob([JSON.stringify(state)]).size;
-  const drive = getDriveStatus();
+  const fam = getFamilyStatus();
 
   root.innerHTML = `
     <div class="page-head"><div><h1>Paramètres</h1><p class="muted">Personnalisation, données et confidentialité</p></div></div>
@@ -36,7 +36,7 @@ export function render(root, { navigate }) {
 
       <div class="card">
         <h2>Sauvegarde & restauration</h2>
-        <p class="muted small">Vos données (${state.transactions.length} opérations, ${(size / 1024).toFixed(1).replace('.', ',')} Ko) sont stockées <b>uniquement dans ce navigateur</b>. Pensez à exporter une sauvegarde régulièrement, notamment avant de changer d'appareil ou de vider le cache.</p>
+        <p class="muted small">Vos données (${state.transactions.length} opérations, ${(size / 1024).toFixed(1).replace('.', ',')} Ko) sont stockées <b>uniquement dans ce navigateur</b>. Pensez à exporter une sauvegarde régulièrement.</p>
         <div class="btn-row wrap">
           <button class="btn btn-primary" data-act="backup">💾 Sauvegarde complète (JSON)</button>
           <button class="btn btn-ghost" data-act="restore">📂 Restaurer une sauvegarde</button>
@@ -47,98 +47,83 @@ export function render(root, { navigate }) {
           <button class="btn btn-ghost" data-act="json">⬇ Export JSON</button>
           <button class="btn btn-ghost" data-act="import-csv">⬆ Import CSV</button>
         </div>
-        <p class="muted small">Format CSV attendu : colonnes <code>Date;Type;Montant;Catégorie;Sous-catégorie;Description;Moyen de paiement;Compte;Note</code> (séparateur « ; » ou « , », dates JJ/MM/AAAA ou AAAA-MM-JJ). Un montant négatif est traité comme une dépense.</p>
+        <p class="muted small">Format CSV : colonnes <code>Date;Type;Montant;Catégorie;Sous-catégorie;Description;Moyen de paiement;Compte;Note</code> (séparateur « ; » ou « , », dates JJ/MM/AAAA ou AAAA-MM-JJ).</p>
         <input type="file" id="file-input" hidden>
       </div>
     </div>
 
-    <!-- Google Drive Sync -->
-    <div class="card" id="drive-card">
+    <!-- Synchronisation Famille -->
+    <div class="card" id="family-card">
       <div class="card-head">
-        <h2>☁️ Synchronisation Google Drive</h2>
-        <span class="badge ${drive.signedIn ? 'ok' : drive.configured ? 'warn' : ''}" id="drive-badge">${drive.syncing ? 'Synchronisation…' : drive.signedIn ? 'Connecté' : drive.configured ? 'Non connecté' : 'Non configuré'}</span>
+        <h2>👨‍👩‍👧‍👦 Synchronisation Famille</h2>
+        <span class="badge ${fam.hasCode ? 'ok' : ''}" id="family-badge">${fam.syncing ? 'Synchro…' : fam.hasCode ? fam.formattedCode : 'Non configuré'}</span>
       </div>
       <p class="muted small">
-        Stockez une copie chiffrée (HTTPS) de vos données dans <b>votre propre Google Drive</b> (dossier caché <code>appDataFolder</code>, invisible dans « Mon Drive »). Idéal pour synchroniser entre appareils sans serveur tiers.
-        Aucune donnée n'est envoyée à EuroPilot — seul votre Drive est utilisé.
+        Centralisez vos données pour les alimenter à plusieurs — <b>sans compte Google, sans Client ID</b>.<br>
+        Crée un <b>salon</b> avec un code à 4 lettres (ex: <code>EURO-8K2P</code>) et partage-le à ta femme : vous alimentez le <b>même budget</b> en temps réel. Données <b>chiffrées côté téléphone</b> (AES-GCM, le code est la clé) — le serveur ne voit que du base64.
       </p>
 
-      ${(() => {
-        const simple = isSimpleMode();
-        const source = getClientIdSource();
-        if (simple) {
-          return `
-          <div class="drive-grid">
-            <div class="drive-simple" style="background:var(--green-soft);border:1px solid color-mix(in srgb, var(--green) 25%, transparent);border-radius:9px;padding:.75rem .9rem">
-              <b style="color:var(--green)">✅ Mode simplifié activé</b>
-              <p class="small" style="margin:.35rem 0 0">Plus besoin de Client ID : cliquez simplement sur <b>« Se connecter avec Google »</b> ci-dessous et choisissez le <b>compte Gmail partagé</b> (ex : <code>famille.dupont@gmail.com</code>).<br>
-              <span class="muted">Utilisez le <b>même compte Gmail</b> sur ton téléphone et celui de ta femme pour partager le même budget et la même synchro. Le téléphone n'a pas besoin d'avoir ce compte lié au système, la fenêtre Google s'ouvre au moment de la connexion.</span></p>
-              <p class="muted small" style="margin:.5rem 0 0">Technique : Client ID préconfiguré dans <code>js/drive-config.js</code> (<code>${esc(source)}</code>). Déconnexion possible à tout moment.</p>
-            </div>
-            <details class="drive-help">
-              <summary class="muted small">Mode avancé : utiliser votre propre Client ID ?</summary>
-              <p class="muted small" style="margin:.5rem 0">Si vous déployez votre propre instance d'EuroPilot, remplacez <code>BUILTIN_CLIENT_ID</code> dans <code>js/drive-config.js</code> par votre propre <code>…apps.googleusercontent.com</code> (type Application Web). Sinon laissez vide pour forcer chaque utilisateur à saisir son Client ID ci-dessous.</p>
-              <label>Client ID personnalisé (prioritaire sur le mode simplifié) <small class="muted">— laissez vide pour rester en mode simplifié</small>
-                <div class="drive-client-row">
-                  <input id="drive-client-id" placeholder="1234567890-abc.apps.googleusercontent.com" value="${esc(store.state.settings.drive?.clientId || '')}" spellcheck="false" autocomplete="off">
-                  <button class="btn btn-ghost" id="drive-save-id">Enregistrer</button>
-                </div>
-              </label>
-            </details>
-          </div>`;
-        } else {
-          const hasCustom = !!store.state.settings.drive?.clientId;
-          return `
-          <div class="drive-grid">
-            <div class="drive-simple" style="background:var(--amber-soft);border:1px solid color-mix(in srgb, var(--amber) 25%, transparent);border-radius:9px;padding:.7rem .85rem">
-              <b>⚠️ Mode simplifié non configuré</b>
-              <p class="small muted" style="margin:.3rem 0 0">Le propriétaire peut activer le mode simplifié en renseignant UNE SEULE FOIS le Client ID dans <code>js/drive-config.js</code> (<code>BUILTIN_CLIENT_ID</code>). En attendant, utilisez le mode avancé ci-dessous (ta femme devra aussi le faire, ou tu peux lui partager ta sauvegarde JSON par mail).</p>
-            </div>
-            <label>Client ID OAuth 2.0 Google <small class="muted">(type « Application Web »)</small>
-              <div class="drive-client-row">
-                <input id="drive-client-id" placeholder="1234567890-abc.apps.googleusercontent.com" value="${esc(drive.clientId || '')}" spellcheck="false" autocomplete="off">
-                <button class="btn btn-ghost" id="drive-save-id">Enregistrer</button>
-              </div>
-            </label>
-            <details class="drive-help" ${hasCustom ? '' : 'open'}>
-              <summary class="muted small">Comment obtenir un Client ID ? (5 min, une fois pour tous)</summary>
-              <ol class="muted small" style="margin:.5rem 0 0 1.2rem; line-height:1.5">
-                <li>Allez sur <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → Identifiants</a></li>
-                <li>« Créer des identifiants » → <b>ID client OAuth</b> → Type <b>Application Web</b></li>
-                <li>Ajoutez en <b>Origines JavaScript autorisées</b> : <code>${esc(location.origin)}</code>, <code>https://onerstyle.github.io</code>, <code>capacitor://localhost</code>, <code>http://localhost</code>, <code>https://localhost</code></li>
-                <li>Activez l'API <code>Google Drive API</code> dans « API et services → Bibliothèque »</li>
-                <li>Copiez le <b>Client ID</b> et collez-le ci-dessus, puis « Enregistrer »</li>
-                <li>Dans <b>Écran de consentement → Audience → Test users</b>, ajoutez les Gmails qui utiliseront la synchro (toi + ta femme) → <b>PUBLISH APP</b> pour ne plus avoir à le refaire</li>
-              </ol>
-              <p class="muted small" style="margin-top:.6rem">💡 Astuce : pour activer le mode simplifié pour toute la famille, mets ce même Client ID dans <code>js/drive-config.js</code> et redéploie — plus besoin de le saisir sur chaque téléphone.</p>
-            </details>
-          </div>`;
-        }
-      })()}
+      <div class="family-code-box" style="background:var(--bg-3);border:1px solid var(--border);border-radius:12px;padding:1rem;text-align:center;margin:.8rem 0">
+        ${fam.hasCode ? `
+          <div class="muted small">Code de ton salon</div>
+          <div style="font:700 2rem var(--mono);letter-spacing:.15em;margin:.2rem 0" id="family-code">${esc(fam.formattedCode)}</div>
+          <div class="btn-row wrap" style="justify-content:center">
+            <button class="btn btn-ghost" id="family-copy">📋 Copier le code</button>
+            <button class="btn btn-ghost" id="family-share">🔗 Partager le lien</button>
+            <button class="btn btn-ghost" id="family-qr">📷 QR Code</button>
+          </div>
+          <p class="muted small" style="margin-top:.6rem">Donne ce code à ta femme → chez elle <b>Rejoindre un salon</b> → colle le code → synchro.</p>
+        ` : `
+          <div class="muted small">Aucun salon</div>
+          <p class="small" style="margin:.5rem 0">Crée un salon ou rejoins celui de ta famille pour centraliser les données.</p>
+          <div class="btn-row wrap" style="justify-content:center">
+            <button class="btn btn-primary" id="family-create">✨ Créer un salon (EURO-XXXX)</button>
+          </div>
+          <div style="margin:.8rem 0;border-top:1px dashed var(--border)"></div>
+          <div style="display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap">
+            <input id="family-join-input" placeholder="EURO-8K2P" style="max-width:160px;text-transform:uppercase;letter-spacing:.1em;text-align:center;font-family:var(--mono);font-weight:700" maxlength="9">
+            <button class="btn btn-ghost" id="family-join">👋 Rejoindre un salon</button>
+          </div>
+        `}
+      </div>
 
-      <div class="drive-status">
+      <div class="drive-status" style="margin-top:.5rem">
         <div class="drive-status-grid">
-          <div><span class="muted small">État</span><br><b id="drive-status-text">${drive.signedIn ? '🟢 Connecté' : drive.configured ? '🟡 En attente de connexion' : '⚪ Non configuré'}</b></div>
-          <div><span class="muted small">Dernière synchro</span><br><b id="drive-last-sync">${esc(formatLastSync(drive.lastSync))}</b></div>
-          <div><span class="muted small">Fichier Drive</span><br><code class="small" id="drive-file-id">${drive.fileId ? esc(drive.fileId.slice(0, 12) + '…') : '—'}</code></div>
+          <div><span class="muted small">État</span><br><b id="family-status-text">${fam.hasCode ? (fam.syncing ? '🔄 Synchro…' : '🟢 Salon actif') : '⚪ Aucun salon'}</b></div>
+          <div><span class="muted small">Dernière synchro</span><br><b id="family-last-sync">${esc(formatFamilyLastSync(fam.lastSync))}</b></div>
+          <div><span class="muted small">Backend</span><br><code class="small">${esc(fam.endpoint.replace(/^https?:\/\//,''))}</code></div>
         </div>
       </div>
 
       <div class="btn-row wrap" style="margin-top:.9rem">
-        <button class="btn btn-primary" id="drive-connect" ${drive.configured && !drive.signedIn ? '' : 'disabled'}>${isSimpleMode() ? '🔗 Se connecter avec Google (compte partagé)' : '🔗 Se connecter'}</button>
-        <button class="btn btn-ghost" id="drive-sync" ${drive.signedIn ? '' : 'disabled'}>${drive.syncing ? '⏳ Synchronisation…' : '🔄 Synchroniser maintenant'}</button>
-        <button class="btn btn-ghost" id="drive-push" ${drive.signedIn ? '' : 'disabled'}>⬆ Envoyer vers Drive</button>
-        <button class="btn btn-ghost" id="drive-pull" ${drive.signedIn ? '' : 'disabled'}>⬇ Restaurer depuis Drive</button>
-        <button class="btn btn-ghost" id="drive-disconnect" ${drive.signedIn ? '' : 'disabled'}>🚪 Se déconnecter</button>
+        <button class="btn btn-primary" id="family-sync" ${fam.hasCode ? '' : 'disabled'}>${fam.syncing ? '⏳ Synchro…' : '🔄 Synchroniser maintenant'}</button>
+        <button class="btn btn-ghost" id="family-push" ${fam.hasCode ? '' : 'disabled'}>⬆ Envoyer</button>
+        <button class="btn btn-ghost" id="family-pull" ${fam.hasCode ? '' : 'disabled'}>⬇ Restaurer</button>
+        <button class="btn btn-ghost" id="family-leave" ${fam.hasCode ? '' : 'disabled'}>🚪 Quitter le salon</button>
       </div>
 
       <label class="check" style="margin-top:.9rem">
-        <input type="checkbox" id="drive-auto" ${drive.autoSync ? 'checked' : ''} ${drive.signedIn ? '' : 'disabled'}>
-        Synchronisation automatique <small class="muted">— envoie la sauvegarde 2–3 s après chaque modification (si connecté)</small>
+        <input type="checkbox" id="family-auto" ${fam.autoSync ? 'checked' : ''} ${fam.hasCode ? '' : 'disabled'}>
+        Synchronisation automatique <small class="muted">— envoie 2s après chaque modification (si salon rejoint)</small>
       </label>
-      <p class="muted small" id="drive-hint" style="margin-top:.5rem">
-        ${!drive.configured ? '⚠️ Aucun Client ID : renseignez-le ci-dessus ou activez le mode simplifié (<code>js/drive-config.js</code>).' : !drive.signedIn ? (isSimpleMode() ? '👉 Cliquez sur « Se connecter avec Google » et choisissez le <b>compte Gmail partagé</b> (même compte sur les 2 téléphones pour partager le budget).' : 'Connectez-vous pour activer la synchro.') : 'Les conflits sont résolus en « dernier écrit gagne » (comparaison <code>updatedAt</code>).' }
-      </p>
+
+      <details class="drive-help" style="margin-top:.8rem">
+        <summary class="muted small">Comment ça marche ?</summary>
+        <ul class="muted small" style="margin:.5rem 0 0 1.2rem;line-height:1.6">
+          <li><b>Créer</b> → génère <code>EURO-XXXX</code> → partage le code (copier / lien / QR)</li>
+          <li><b>Rejoindre</b> → colle le code sur l'autre téléphone → <code>Synchroniser</code></li>
+          <li>Utilisez <b>le même code sur tous les téléphones</b> qui doivent partager le budget</li>
+          <li>Les données sont <b>chiffrées avec le code</b> avant envoi (AES-GCM 256, PBKDF2 120k itérations) — le serveur ne peut pas les lire</li>
+          <li>Hors ligne : l'app fonctionne normalement, la sync sera retentée à la reconnexion</li>
+          <li>Partage manuel de secours : <code>Sauvegarde complète → QR / Fichier</code> disponible même sans réseau</li>
+        </ul>
+      </details>
+
+      <div class="btn-row wrap" style="margin-top:.8rem">
+        <button class="btn btn-ghost" id="family-export-qr">📤 Exporter en QR / Lien</button>
+        <button class="btn btn-ghost" id="family-export-file">💾 Exporter fichier chiffré</button>
+        <label class="btn btn-ghost" style="cursor:pointer"><input type="file" id="family-import-file" hidden accept=".json,.txt">📥 Importer fichier chiffré</label>
+      </div>
     </div>
 
     <div class="card">
@@ -156,7 +141,7 @@ export function render(root, { navigate }) {
 
     <div class="card">
       <h2>Confidentialité</h2>
-      <p class="muted small">🔒 EuroPilot fonctionne entièrement hors ligne. Aucune donnée financière n'est envoyée à un serveur, aucun compte n'est requis, aucun traceur n'est utilisé. Le code source est ouvert (licence MIT). La synchro Drive, si vous l'activez, utilise uniquement votre propre Google Drive (appDataFolder).</p>
+      <p class="muted small">🔒 EuroPilot reste utilisable hors ligne. La synchro Famille chiffre vos données côté téléphone avant envoi — le serveur ne voit que du base64 et ne peut pas lire vos montants sans le code.</p>
       <div class="btn-row wrap">
         <button class="btn btn-ghost" data-act="demo">🧪 Charger des données de démonstration</button>
         <button class="btn btn-ghost" data-act="demo-clear">🗑️ Supprimer les données de démonstration</button>
@@ -213,121 +198,107 @@ export function render(root, { navigate }) {
     } catch (e) { console.error(e); toast('Erreur : ' + e.message, { type: 'error', duration: 7000 }); }
   });
 
-  // ---------- Drive bindings ----------
-  const driveBadge = $('#drive-badge', root);
-  const driveStatusText = $('#drive-status-text', root);
-  const driveLastSync = $('#drive-last-sync', root);
-  const driveFileId = $('#drive-file-id', root);
-  const driveConnect = $('#drive-connect', root);
-  const driveSyncBtn = $('#drive-sync', root);
-  const drivePush = $('#drive-push', root);
-  const drivePull = $('#drive-pull', root);
-  const driveDisconnect = $('#drive-disconnect', root);
-  const driveAuto = $('#drive-auto', root);
-  const driveHint = $('#drive-hint', root);
-  const driveClientInput = $('#drive-client-id', root);
+  // ---------- Famille bindings ----------
+  const famBadge = $('#family-badge', root);
+  const famCodeEl = $('#family-code', root);
+  const famStatusText = $('#family-status-text', root);
+  const famLastSync = $('#family-last-sync', root);
+  const famSyncBtn = $('#family-sync', root);
+  const famPush = $('#family-push', root);
+  const famPull = $('#family-pull', root);
+  const famLeave = $('#family-leave', root);
+  const famAuto = $('#family-auto', root);
 
-  function refreshDriveUI(s = getDriveStatus()) {
-    const simple = isSimpleMode();
-    if (driveBadge) {
-      driveBadge.textContent = s.syncing ? 'Synchronisation…' : s.signedIn ? 'Connecté' : s.configured ? 'Non connecté' : 'Non configuré';
-      driveBadge.className = 'badge ' + (s.syncing ? '' : s.signedIn ? 'ok' : s.configured ? 'warn' : '');
+  function refreshFamilyUI(s = getFamilyStatus()) {
+    if (famBadge) {
+      famBadge.textContent = s.syncing ? 'Synchro…' : s.hasCode ? s.formattedCode : 'Non configuré';
+      famBadge.className = 'badge ' + (s.hasCode ? 'ok' : '');
     }
-    if (driveStatusText) driveStatusText.textContent = s.syncing ? '🔄 Synchronisation…' : s.signedIn ? '🟢 Connecté' : s.configured ? '🟡 En attente de connexion' : '⚪ Non configuré';
-    if (driveLastSync) driveLastSync.textContent = formatLastSync(s.lastSync);
-    if (driveFileId) driveFileId.textContent = s.fileId ? s.fileId.slice(0, 12) + '…' : '—';
-    if (driveConnect) {
-      driveConnect.disabled = !s.configured || s.signedIn || s.syncing;
-      driveConnect.textContent = simple ? '🔗 Se connecter avec Google (compte partagé)' : '🔗 Se connecter';
-    }
-    if (driveSyncBtn) { driveSyncBtn.disabled = !s.signedIn || s.syncing; driveSyncBtn.textContent = s.syncing ? '⏳ Synchronisation…' : '🔄 Synchroniser maintenant'; }
-    if (drivePush) drivePush.disabled = !s.signedIn || s.syncing;
-    if (drivePull) drivePull.disabled = !s.signedIn || s.syncing;
-    if (driveDisconnect) driveDisconnect.disabled = !s.signedIn;
-    if (driveAuto) { driveAuto.checked = !!s.autoSync; driveAuto.disabled = !s.signedIn; }
-    if (driveHint) {
-      if (!s.configured) driveHint.innerHTML = '⚠️ Aucun Client ID : renseignez-le ci-dessus ou activez le mode simplifié (<code>js/drive-config.js</code>).';
-      else if (!s.signedIn) driveHint.innerHTML = simple ? '👉 Cliquez sur « Se connecter avec Google » et choisissez le <b>compte Gmail partagé</b> (même compte sur les 2 téléphones).' : 'Connectez-vous pour activer la synchro.';
-      else driveHint.innerHTML = 'Les conflits sont résolus en « dernier écrit gagne » (comparaison <code>updatedAt</code>).';
-    }
+    if (famStatusText) famStatusText.textContent = s.syncing ? '🔄 Synchro…' : s.hasCode ? '🟢 Salon actif' : '⚪ Aucun salon';
+    if (famLastSync) famLastSync.textContent = formatFamilyLastSync(s.lastSync);
+    if (famSyncBtn) { famSyncBtn.disabled = !s.hasCode || s.syncing; famSyncBtn.textContent = s.syncing ? '⏳ Synchro…' : '🔄 Synchroniser maintenant'; }
+    if (famPush) famPush.disabled = !s.hasCode || s.syncing;
+    if (famPull) famPull.disabled = !s.hasCode || s.syncing;
+    if (famLeave) famLeave.disabled = !s.hasCode;
+    if (famAuto) { famAuto.checked = !!s.autoSync; famAuto.disabled = !s.hasCode; }
+    if (famCodeEl) famCodeEl.textContent = s.formattedCode;
   }
+  const offFam = onFamilyStatus(refreshFamilyUI);
+  const prev = root._offFam;
+  if (prev) prev();
+  root._offFam = offFam;
 
-  const offDrive = onDriveStatus(refreshDriveUI);
+  // Créer / Rejoindre
+  $('#family-create', root)?.addEventListener('click', async () => {
+    try { await createFamilySalon(); } catch (e) { toast(e.message, { type: 'error', duration: 7000 }); }
+  });
+  $('#family-join', root)?.addEventListener('click', async () => {
+    const v = $('#family-join-input', root).value.trim();
+    if (!v) { toast('Saisis un code (ex: EURO-8K2P)', { type: 'error' }); return; }
+    try { await joinFamilySalon(v); } catch (e) { toast(e.message, { type: 'error', duration: 7000 }); }
+  });
+  $('#family-join-input', root)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#family-join', root).click(); });
+  $('#family-copy', root)?.addEventListener('click', async () => {
+    const c = getFamilyStatus().formattedCode;
+    try { await navigator.clipboard.writeText(c); toast('Code copié : ' + c, { type: 'success' }); } catch { toast('Code : ' + c, { duration: 6000 }); }
+  });
+  $('#family-share', root)?.addEventListener('click', async () => {
+    const c = getFamilyStatus().formattedCode;
+    const url = location.origin + location.pathname + '#family=' + encodeURIComponent(c);
+    if (navigator.share) { try { await navigator.share({ title: 'EuroPilot — Salon famille', text: `Rejoins mon salon EuroPilot : ${c}`, url }); return; } catch {} }
+    try { await navigator.clipboard.writeText(url); toast('Lien copié', { type: 'success' }); } catch { openModal({ title: 'Lien de partage', content: `<p>Partage ce lien à ta famille :</p><code style="word-break:break-all;display:block;background:var(--bg-3);padding:.7rem;border-radius:8px">${esc(url)}</code>` }); }
+  });
+  $('#family-qr', root)?.addEventListener('click', async () => {
+    const c = getFamilyStatus().formattedCode;
+    const url = location.origin + location.pathname + '#family=' + encodeURIComponent(c);
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(url)}`;
+    openModal({ title: 'QR Code — Salon ' + c, content: `<div style="text-align:center"><img src="${qrUrl}" alt="QR" style="image-rendering:pixelated;border:1px solid var(--border);border-radius:12px"><p class="muted small" style="margin-top:.6rem">Scanne ce QR sur l'autre téléphone → il rejoindra le salon <b>${esc(c)}</b></p><code style="display:block;margin-top:.5rem;word-break:break-all">${esc(url)}</code></div>` });
+  });
+  $('#family-leave', root)?.addEventListener('click', async () => {
+    if (await confirm(`Quitter le salon <b>${esc(getFamilyStatus().formattedCode)}</b> ?<br>Les données locales restent, mais tu ne seras plus synchronisé.`, { title: 'Quitter', okLabel: 'Quitter' })) leaveFamilySalon();
+  });
+  famSyncBtn?.addEventListener('click', async () => {
+    famSyncBtn.disabled = true;
+    try { await syncFamilyNow({ direction: 'auto' }); } catch (e) { toast(e.message, { type: 'error', duration: 8000 }); } finally { refreshFamilyUI(); }
+  });
+  famPush?.addEventListener('click', async () => {
+    famPush.disabled = true;
+    try { await pushToFamily(); } catch (e) { toast(e.message, { type: 'error', duration: 8000 }); } finally { refreshFamilyUI(); }
+  });
+  famPull?.addEventListener('click', async () => {
+    famPull.disabled = true;
+    try { await pullFromFamily({ confirmOverwrite: true }); } catch (e) { toast(e.message, { type: 'error', duration: 8000 }); } finally { refreshFamilyUI(); }
+  });
+  famAuto?.addEventListener('change', (e) => setFamilyAutoSync(e.target.checked));
 
-  // cleanup when navigating away (le render suivant recrée tout)
-  const prevUnmount = root._offDrive;
-  if (prevUnmount) prevUnmount();
-  root._offDrive = offDrive;
-
-  $('#drive-save-id', root).onclick = () => {
-    const v = driveClientInput.value.trim();
-    if (v && !/\.apps\.googleusercontent\.com$/.test(v)) {
-      toast('Le Client ID doit se terminer par .apps.googleusercontent.com', { type: 'error', duration: 6000 });
-      return;
-    }
-    setClientId(v);
-    toast(v ? 'Client ID enregistré' : 'Client ID effacé', { type: 'success' });
-  };
-  driveClientInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#drive-save-id', root).click(); });
-
-  // Helper : affiche une erreur Drive de façon actionnable (modale pour le cas "OAuth client was not found")
-  function showDriveError(e) {
-    const msg = String(e?.message || e || '');
-    console.error('[drive]', e);
-    const isClientNotFound = msg.includes('Client OAuth introuvable') || msg.toLowerCase().includes('oauth client was not found');
-    if (isClientNotFound || msg.length > 400) {
-      // Modale détaillée — le cas de ta femme est expliqué ici
-      const detail = esc(msg).replace(/\n/g, '<br>').slice(0, 3000);
-      openModal({
-        title: isClientNotFound ? 'Connexion Drive bloquée — action requise' : 'Erreur Drive',
-        size: '',
-        content: `<div style="line-height:1.6">
-          <div style="background:var(--bg-3);border:1px solid var(--border);border-radius:9px;padding:.7rem .85rem;max-height:220px;overflow:auto;font-size:.82rem;white-space:pre-wrap;word-break:break-word">${detail}</div>
-          ${isClientNotFound ? `
-          <p class="muted small" style="margin-top:.8rem"><b>Pourquoi chez toi ça marche et pas chez ta femme ?</b> Ton compte est propriétaire du projet Cloud → automatiquement autorisé. Son compte ne l'est pas → Google bloque en mode <code>Testing</code>.</p>
-          <ol style="margin:.6rem 0 0 1.2rem" class="small">
-            <li><b>Vérifie le Client ID</b> : <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Cloud Console → Identifiants</a> → le bon projet doit être sélectionné, le Client ID doit se terminer par <code>.apps.googleusercontent.com</code> et être de type <b>Application Web</b> (pas Android).</li>
-            <li><b>Active Drive API</b> : <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener">Bibliothèque → Google Drive API → Activer</a> (attendre 2 min).</li>
-            <li><b>Autorise ta femme</b> : <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener">Écran de consentement → Audience → Test users → + Add users</a> → ajoute <code>gmail-de-ta-femme@gmail.com</code> (et le tien). <b>OU</b> clique sur <b>PUBLISH APP</b> pour passer en Production (fini la limite 7 jours).</li>
-            <li><b>Origines autorisées</b> : dans <b>Identifiants → ton ID client Web → Origines JavaScript autorisées</b>, ajoute exactement :<br>
-              <code>https://onerstyle.github.io</code><br>
-              <code>${esc(location.origin)}</code><br>
-              <code>capacitor://localhost</code><br>
-              <code>http://localhost</code> et <code>https://localhost</code></li>
-          </ol>
-          <p class="muted small" style="margin-top:.7rem">💡 Le téléphone n'a pas besoin d'avoir le compte Gmail lié au système : la connexion se fait dans la fenêtre Google qui s'ouvre. Elle se loguera avec son Gmail.</p>
-          ` : ''}
-          <p class="muted small" style="margin-top:.7rem">Besoin d'aide ? Copie le bloc ci-dessus et envoie-le. En attendant, tu peux utiliser <b>Sauvegarde complète → envoi par mail</b> puis <b>Restaurer</b> chez elle.</p>
-        </div>`,
-        footer: `<a class="btn btn-ghost" href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener">Ouvrir Cloud Console (Test users)</a><button class="btn btn-primary" data-close>Fermer</button>`,
-      });
-    } else {
-      toast(msg, { type: 'error', duration: msg.length > 200 ? 10000 : 7000 });
-    }
-  }
-
-  driveConnect.onclick = async () => {
-    driveConnect.disabled = true;
-    try { await signIn({ prompt: true }); } catch (e) { showDriveError(e); } finally { refreshDriveUI(); }
-  };
-  driveDisconnect.onclick = async () => {
-    if (await confirm('Se déconnecter de Google Drive ?<br>La sauvegarde restera sur votre Drive, mais EuroPilot n’y aura plus accès jusqu’à la prochaine connexion.', { title: 'Déconnexion', okLabel: 'Se déconnecter', danger: false })) {
-      signOut();
-    }
-  };
-  driveSyncBtn.onclick = async () => {
-    driveSyncBtn.disabled = true;
-    try { await syncNow({ direction: 'auto' }); } catch (e) { showDriveError(e); } finally { refreshDriveUI(); }
-  };
-  drivePush.onclick = async () => {
-    drivePush.disabled = true;
-    try { await pushToDrive(); } catch (e) { showDriveError(e); } finally { refreshDriveUI(); }
-  };
-  drivePull.onclick = async () => {
-    drivePull.disabled = true;
-    try { await pullFromDrive({ confirmOverwrite: true }); } catch (e) { showDriveError(e); } finally { refreshDriveUI(); }
-  };
-  driveAuto.onchange = (e) => setAutoSync(e.target.checked);
+  // Export / Import chiffré de secours
+  $('#family-export-qr', root)?.addEventListener('click', async () => {
+    try {
+      const { code, b64 } = await (await import('../family-sync.js')).exportFamilySharePayload();
+      const url = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(b64.slice(0, 800))}`;
+      openModal({ title: 'Export chiffré — ' + code, content: `<p class="muted small">Données chiffrées avec le code <b>${esc(code)}</b>. L'autre téléphone peut importer ce fichier même hors ligne.</p><div style="text-align:center"><img src="${url}" style="max-width:100%;border:1px solid var(--border);border-radius:12px"></div><p class="muted small" style="margin-top:.6rem">Ou copie ce bloc (à envoyer par mail) :</p><textarea readonly style="width:100%;height:80px;font:12px var(--mono)">${esc(b64.slice(0, 600))}…</textarea>` });
+    } catch (e) { toast(e.message, { type: 'error', duration: 7000 }); }
+  });
+  $('#family-export-file', root)?.addEventListener('click', async () => {
+    try {
+      const mod = await import('../family-sync.js');
+      const { code, b64, payload } = await mod.exportFamilySharePayload();
+      download(`europilot-famille-${code}-${new Date().toISOString().slice(0,10)}.txt`, b64, 'text/plain');
+      toast('Fichier chiffré exporté', { type: 'success' });
+    } catch (e) { toast(e.message, { type: 'error', duration: 7000 }); }
+  });
+  $('#family-import-file', root)?.addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const txt = await readFile(f);
+      const code = getFamilyStatus().code || prompt('Code du salon (ex: EURO-8K2P) :');
+      if (!code) return;
+      const mod = await import('../family-sync.js');
+      const data = await mod.importFamilySharePayload(txt.trim(), code.trim());
+      toast(`Import famille réussi (${data.transactions.length} opérations)`, { type: 'success' });
+    } catch (err) { toast('Import échoué : ' + err.message, { type: 'error', duration: 7000 }); }
+    e.target.value = '';
+  });
 }
 
 /** Formulaire catégorie */

@@ -6,7 +6,7 @@ import { store } from './store.js';
 import { $, $$, fmtEuro } from './utils.js';
 import { transactionForm, toast, closeModal, confirm } from './ui.js';
 import { processRecurring } from './recurring.js';
-import { initDriveSync, getDriveStatus, onDriveStatus } from './drive.js';
+import { initFamilySync, getFamilyStatus, onFamilyStatus } from './family-sync.js';
 
 /** Table des vues (chargées à la demande) */
 const VIEWS = {
@@ -91,8 +91,8 @@ function onboarding() {
 function init() {
   applyTheme();
   buildNav();
-  // Synchronisation Drive (optionnelle, silencieuse au démarrage)
-  try { initDriveSync(); } catch (e) { console.warn('[drive] init échoué', e); }
+  // Synchronisation Famille (par code partagé, optionnelle)
+  try { initFamilySync(); } catch (e) { console.warn('[family] init échoué', e); }
 
   // Génération des opérations récurrentes échues
   const n = processRecurring();
@@ -133,34 +133,35 @@ function init() {
   if (!isNative && 'serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
-/** En-tête : solde global + état du bouton d'annulation + indicateur Drive */
+/** En-tête : solde global + état du bouton d'annulation + indicateur Famille */
 function updateHeader() {
   const b = store.totalBalance();
   const el = $('#header-balance'); el.textContent = fmtEuro(b); el.className = b >= 0 ? 'pos' : 'neg';
   const u = $('#undo-btn'); u.disabled = !store.canUndo; u.title = store.canUndo ? `Annuler : ${store.lastUndoLabel}` : 'Rien à annuler';
-  // Indicateur discret Drive (point vert/bleu/gris dans le header)
-  const ds = getDriveStatus();
-  let dot = $('#drive-dot');
+  // Indicateur Famille (point vert/bleu/gris dans le header)
+  const fs = getFamilyStatus();
+  let dot = $('#family-dot');
   if (!dot) {
     const bal = document.querySelector('.topbar-balance');
     if (bal) {
       dot = document.createElement('span');
-      dot.id = 'drive-dot';
-      dot.title = 'Google Drive';
+      dot.id = 'family-dot';
+      dot.title = 'Famille';
       dot.style.cssText = 'display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px;vertical-align:middle;';
       bal.querySelector('b')?.appendChild(dot);
-      // alternative: ajouter à côté du solde sur mobile
     }
   }
   if (dot) {
-    if (ds.syncing) { dot.style.background = '#3b82f6'; dot.title = 'Synchronisation Drive…'; dot.style.boxShadow = '0 0 0 3px rgba(59,130,246,.25)'; }
-    else if (ds.signedIn) { dot.style.background = '#16a34a'; dot.title = `Drive connecté — dernière sync : ${ds.lastSync ? new Date(ds.lastSync).toLocaleString('fr-FR') : 'jamais'}`; dot.style.boxShadow = '0 0 0 3px rgba(22,163,74,.2)'; }
-    else if (ds.configured) { dot.style.background = '#94a3b8'; dot.title = 'Drive configuré mais non connecté'; dot.style.boxShadow = 'none'; }
-    else { dot.style.background = 'transparent'; dot.title = 'Drive non configuré'; dot.style.boxShadow = 'none'; }
+    if (fs.syncing) { dot.style.background = '#3b82f6'; dot.title = 'Synchronisation famille…'; dot.style.boxShadow = '0 0 0 3px rgba(59,130,246,.25)'; }
+    else if (fs.hasCode) { dot.style.background = '#16a34a'; dot.title = `Famille ${fs.formattedCode} — dernière sync : ${fs.lastSync ? new Date(fs.lastSync).toLocaleString('fr-FR') : 'jamais'}`; dot.style.boxShadow = '0 0 0 3px rgba(22,163,74,.2)'; }
+    else { dot.style.background = 'transparent'; dot.title = 'Famille non configurée'; dot.style.boxShadow = 'none'; }
   }
+  // compat : ancien dot drive retiré
+  const old = $('#drive-dot');
+  if (old) old.remove();
 }
 
-// Abonnement Drive → met à jour le header quand le statut change
-try { onDriveStatus(() => updateHeader()); } catch {}
+// Abonnement Famille → met à jour le header quand le statut change
+try { onFamilyStatus(() => updateHeader()); } catch {}
 
 init();
